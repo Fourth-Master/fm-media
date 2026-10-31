@@ -336,7 +336,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.8.7;
+				MARKETING_VERSION = 1.8.9;
 				PRODUCT_BUNDLE_IDENTIFIER = com.fmmedia.fmplayer;
 				PRODUCT_NAME = "FMMedia";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -369,7 +369,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.8.7;
+				MARKETING_VERSION = 1.8.9;
 				PRODUCT_BUNDLE_IDENTIFIER = com.fmmedia.fmplayer;
 				PRODUCT_NAME = "FMMedia";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";

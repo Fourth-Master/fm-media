@@ -24,6 +24,12 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "App version: $VERSION"
 
+      # 以 project.yml 为准同步到工程文件，避免两处版本号脱节
+      - name: Sync version into project
+        run: |
+          sed -i '' "s/MARKETING_VERSION = [0-9.]*;/MARKETING_VERSION = ${VERSION};/g" "FMMedia.xcodeproj/project.pbxproj"
+          grep -n "MARKETING_VERSION" "FMMedia.xcodeproj/project.pbxproj"
+
       - name: Toolchain info
         run: |
           xcodebuild -version
