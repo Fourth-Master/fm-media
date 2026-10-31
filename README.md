@@ -11,8 +11,8 @@
 
 ## 一、快速开始
 
-1. 用 Xcode 16 打开 `FM影媒.xcodeproj`。
-2. 选择 `FM影媒` scheme 与一台 iOS 15.4+ 模拟器或真机。
+1. 用 Xcode 16 打开 `FMMedia.xcodeproj`。
+2. 选择 `FMMedia` scheme 与一台 iOS 15.4+ 模拟器或真机。
 3. 真机运行需要在 `Signing & Capabilities` 里选择自己的 Team（Bundle ID 默认 `com.fmmedia.fmplayer`，可自行修改）。
 4. ⌘R 运行。
 
@@ -232,7 +232,7 @@ App 内置两套解码内核，可在「设置 → 播放 → 播放内核」切
 iOS 没有系统级 SMB 客户端，本项目通过可选依赖实现：
 
 1. Xcode → `File → Add Package Dependencies…`
-2. 输入 `https://github.com/amosavian/AMSMB2`，选择 3.x 或 4.x，添加到 `FM影媒` target；
+2. 输入 `https://github.com/amosavian/AMSMB2`，选择 3.x 或 4.x，添加到 `FMMedia` target；
 3. 重新编译。`SMBProvider.swift` 中的 `#if canImport(AMSMB2)` 分支会自动生效。
 
 未添加依赖时，SMB 来源会给出明确提示，其它功能不受影响。若 AMSMB2 的 API 版本有差异，只需调整 `SMBLibProvider` 内部的调用（文件已隔离，约 200 行）。
@@ -244,7 +244,7 @@ iOS 没有系统级 SMB 客户端，本项目通过可选依赖实现：
 ## 八、项目结构
 
 ```
-FM影媒.xcodeproj          工程（Xcode 16 文件夹同步组）
+FMMedia.xcodeproj          工程（Xcode 16 文件夹同步组）
 AppConfig/Info.plist      Info.plist（ATS、后台音频、本地网络等）
 FM影媒/
   App/                    入口、根视图

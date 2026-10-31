@@ -5,8 +5,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-SCHEME="FM影媒"
-PROJECT="FM影媒.xcodeproj"
+SCHEME="FMMedia"
+PROJECT="FMMedia.xcodeproj"
 OUT_NAME="${1:-FMMedia.ipa}"
 BUILD_DIR="build"
 

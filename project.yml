@@ -1,4 +1,4 @@
-name: FM影媒
+name: FMMedia
 options:
   bundleIdPrefix: com.fmmedia
   deploymentTarget:
@@ -15,15 +15,15 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
 
 targets:
-  FM影媒:
+  FMMedia:
     type: application
     platform: iOS
     deploymentTarget: "15.4"
     sources:
-      - path: FM影媒
+      - path: FMMedia
     settings:
       base:
-        PRODUCT_NAME: FM影媒
+        PRODUCT_NAME: FMMedia
         PRODUCT_BUNDLE_IDENTIFIER: com.fmmedia.fmplayer
         INFOPLIST_FILE: AppConfig/Info.plist
         GENERATE_INFOPLIST_FILE: NO

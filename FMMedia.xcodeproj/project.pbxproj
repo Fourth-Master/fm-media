@@ -27,14 +27,14 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		F1A000000000000000000005 /* FM影媒.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "FM影媒.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		F1A000000000000000000005 /* FMMedia.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "FMMedia.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		F1A0000000000000000000F1 /* MobileVLCKit.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = MobileVLCKit.xcframework; path = Vendor/MobileVLCKit.xcframework; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		F1A000000000000000000003 /* FM影媒 */ = {
+		F1A000000000000000000003 /* FMMedia */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "FM影媒";
+			path = "FMMedia";
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -55,7 +55,7 @@
 		F1A000000000000000000001 = {
 			isa = PBXGroup;
 			children = (
-				F1A000000000000000000003 /* FM影媒 */,
+				F1A000000000000000000003 /* FMMedia */,
 				F1A0000000000000000000F1 /* MobileVLCKit.xcframework */,
 				F1A000000000000000000002 /* Products */,
 			);
@@ -64,7 +64,7 @@
 		F1A000000000000000000002 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				F1A000000000000000000005 /* FM影媒.app */,
+				F1A000000000000000000005 /* FMMedia.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -72,9 +72,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		F1A000000000000000000004 /* FM影媒 */ = {
+		F1A000000000000000000004 /* FMMedia */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = F1A00000000000000000000A /* Build configuration list for PBXNativeTarget "FM影媒" */;
+			buildConfigurationList = F1A00000000000000000000A /* Build configuration list for PBXNativeTarget "FMMedia" */;
 			buildPhases = (
 				F1A0000000000000000000F3 /* Fetch MobileVLCKit */,
 				F1A000000000000000000006 /* Sources */,
@@ -87,14 +87,14 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				F1A000000000000000000003 /* FM影媒 */,
+				F1A000000000000000000003 /* FMMedia */,
 			);
-			name = "FM影媒";
+			name = "FMMedia";
 			packageProductDependencies = (
 				F1A0000000000000000000C2 /* MPVKit */,
 			);
-			productName = "FM影媒";
-			productReference = F1A000000000000000000005 /* FM影媒.app */;
+			productName = "FMMedia";
+			productReference = F1A000000000000000000005 /* FMMedia.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -112,7 +112,7 @@
 					};
 				};
 			};
-			buildConfigurationList = F1A000000000000000000009 /* Build configuration list for PBXProject "FM影媒" */;
+			buildConfigurationList = F1A000000000000000000009 /* Build configuration list for PBXProject "FMMedia" */;
 			developmentRegion = "zh-Hans";
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -130,7 +130,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				F1A000000000000000000004 /* FM影媒 */,
+				F1A000000000000000000004 /* FMMedia */,
 			);
 		};
 /* End PBXProject section */
@@ -338,7 +338,7 @@
 				);
 				MARKETING_VERSION = 1.8.7;
 				PRODUCT_BUNDLE_IDENTIFIER = com.fmmedia.fmplayer;
-				PRODUCT_NAME = "FM影媒";
+				PRODUCT_NAME = "FMMedia";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
@@ -371,7 +371,7 @@
 				);
 				MARKETING_VERSION = 1.8.7;
 				PRODUCT_BUNDLE_IDENTIFIER = com.fmmedia.fmplayer;
-				PRODUCT_NAME = "FM影媒";
+				PRODUCT_NAME = "FMMedia";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
@@ -385,7 +385,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		F1A000000000000000000009 /* Build configuration list for PBXProject "FM影媒" */ = {
+		F1A000000000000000000009 /* Build configuration list for PBXProject "FMMedia" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				F1A00000000000000000000B /* Debug */,
@@ -394,7 +394,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		F1A00000000000000000000A /* Build configuration list for PBXNativeTarget "FM影媒" */ = {
+		F1A00000000000000000000A /* Build configuration list for PBXNativeTarget "FMMedia" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				F1A00000000000000000000D /* Debug */,

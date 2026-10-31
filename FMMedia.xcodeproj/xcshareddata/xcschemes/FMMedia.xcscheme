@@ -15,9 +15,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "F1A000000000000000000004"
-               BuildableName = "FM影媒.app"
-               BlueprintName = "FM影媒"
-               ReferencedContainer = "container:FM影媒.xcodeproj">
+               BuildableName = "FMMedia.app"
+               BlueprintName = "FMMedia"
+               ReferencedContainer = "container:FMMedia.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -45,9 +45,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "F1A000000000000000000004"
-            BuildableName = "FM影媒.app"
-            BlueprintName = "FM影媒"
-            ReferencedContainer = "container:FM影媒.xcodeproj">
+            BuildableName = "FMMedia.app"
+            BlueprintName = "FMMedia"
+            ReferencedContainer = "container:FMMedia.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -62,9 +62,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "F1A000000000000000000004"
-            BuildableName = "FM影媒.app"
-            BlueprintName = "FM影媒"
-            ReferencedContainer = "container:FM影媒.xcodeproj">
+            BuildableName = "FMMedia.app"
+            BlueprintName = "FMMedia"
+            ReferencedContainer = "container:FMMedia.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

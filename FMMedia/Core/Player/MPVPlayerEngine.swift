@@ -437,7 +437,7 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
         mpv_set_option_string(ctx, "osc", "no")
         mpv_set_option_string(ctx, "hwdec", decodeMode.mpvValue)
         MPVDebugLog.write("hwdec = (decodeMode.mpvValue)")
-        mpv_set_option_string(ctx, "audio-client-name", "FM影媒")
+        mpv_set_option_string(ctx, "audio-client-name", "FMMedia")
 
         let initResult = mpv_initialize(ctx)
         MPVDebugLog.write("mpv_initialize result: ((initResult))")
