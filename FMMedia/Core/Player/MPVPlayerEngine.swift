@@ -164,7 +164,7 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
     private let containerView = UIView()
     private let glView = MPVGLView()
     private let swDisplayView = UIView()
-    private var renderAPI: RenderAPI = .gl
+    private var renderAPI: RenderAPI = .sw
     private var isAttached = false
     private var frameRendered = false
     private var glContext: EAGLContext?
@@ -192,7 +192,7 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
         super.init()
         containerView.backgroundColor = .black
         swDisplayView.backgroundColor = .black
-        swDisplayView.isHidden = true
+        glView.isHidden = true
         swDisplayView.layer.contentsGravity = .resizeAspect
         containerView.addSubview(swDisplayView)
         containerView.addSubview(glView)
@@ -280,7 +280,7 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
         MPVDebugLog.write("=== teardown ===")
         MPVDebugLog.stop()
         isAttached = false
-        renderAPI = .gl
+        renderAPI = .sw
         frameRendered = false
         destroyFramebuffer()
         bufferSize = .zero
