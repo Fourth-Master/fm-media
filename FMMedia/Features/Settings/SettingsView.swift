@@ -209,11 +209,6 @@ struct SettingsView: View {
             } label: {
                 Label("重复番号检测", systemImage: "rectangle.stack.badge.minus")
             }
-            NavigationLink {
-                MPVLogViewer()
-            } label: {
-                Label("MPV 调试日志", systemImage: "doc.text.magnifyingglass")
-            }
 
             Button(role: .destructive) {
                 showClearLibrary = true
