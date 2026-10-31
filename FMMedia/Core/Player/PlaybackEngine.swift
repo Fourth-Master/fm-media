@@ -120,10 +120,12 @@ enum PlaybackDecodeMode: String, Codable, CaseIterable, Identifiable, Equatable,
     }
 
     /// libmpv 的 hwdec 取值
+    /// iOS GLES 渲染下 videotoolbox 零拷贝路径的 IOSurface 纹理会色度错乱（画面发绿），
+    /// 统一使用 -copy 变体：帧拷贝到内存后由 mpv 转换，颜色必定正确
     var mpvValue: String {
         switch self {
-        case .auto: return "auto-safe"
-        case .hardware: return "videotoolbox"
+        case .auto: return "auto-copy-safe"
+        case .hardware: return "videotoolbox-copy"
         case .software: return "no"
         }
     }
