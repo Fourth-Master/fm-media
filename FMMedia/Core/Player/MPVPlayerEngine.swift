@@ -527,7 +527,6 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
         setOption(ctx, "keep-open", "no")
         setOption(ctx, "input-default-bindings", "no")
         setOption(ctx, "input-vo-keyboard", "no")
-        setOption(ctx, "osc", "no")
         setOption(ctx, "hwdec", decodeMode.mpvValue)
         AppDebugLog.write("[MPV] hwdec = \(decodeMode.mpvValue)")
         setOption(ctx, "audio-client-name", "FMMedia")

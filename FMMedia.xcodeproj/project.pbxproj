@@ -44,8 +44,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				F1A0000000000000000000F2 /* MobileVLCKit.xcframework in Frameworks */,
 				F1A0000000000000000000C3 /* MPVKit in Frameworks */,
+				F1A0000000000000000000F2 /* MobileVLCKit.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
