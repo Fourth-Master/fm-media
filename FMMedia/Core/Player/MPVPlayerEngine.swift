@@ -537,6 +537,11 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
         setOption(ctx, "demuxer-readahead-secs", "30")
         setOption(ctx, "network-timeout", "60")
         setOption(ctx, "force-window", "no")
+        // 画质：高质量缩放与抖动（GLES3 非 dumb mode 下生效；GLES2 dumb mode 自动忽略）
+        setOption(ctx, "scale", "spline36")
+        setOption(ctx, "cscale", "spline36")
+        setOption(ctx, "dscale", "mitchell")
+        setOption(ctx, "dither-depth", "auto")
 
         let initResult = mpv_initialize(ctx)
         AppDebugLog.write("[MPV] mpv_initialize result: \(initResult)")
@@ -650,7 +655,11 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
         AppDebugLog.write("[MPV] attachGLRenderContext: creating EAGLContext")
         glView.isHidden = false
         swDisplayView.isHidden = true
-        guard let eagl = EAGLContext(api: .openGLES2) else {
+        // GLES3：mpv 可创建高精度 FBO 并启用高质量缩放；
+        // GLES2 会退化为 dumb mode（仅双线性缩放，画质明显变差）
+        var eaglContext = EAGLContext(api: .openGLES3)
+        if eaglContext == nil { eaglContext = EAGLContext(api: .openGLES2) }
+        guard let eagl = eaglContext else {
             AppDebugLog.write("[MPV] ERROR: EAGLContext creation failed")
             if !triedSW && !Self.swBuildUnsupported {
                 switchToSWRender()
@@ -659,6 +668,7 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
             }
             return
         }
+        AppDebugLog.write("[MPV] EAGLContext api=\(eagl.api == .openGLES3 ? "GLES3" : "GLES2")")
         EAGLContext.setCurrent(eagl)
         glContext = eagl
 

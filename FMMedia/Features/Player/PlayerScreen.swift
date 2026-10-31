@@ -78,25 +78,6 @@ struct PlayerScreen: View {
                 .background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
 
-            if vm.networkSpeed > 1024 {
-                VStack {
-                    HStack(spacing: 5) {
-                        Image(systemName: "arrow.down.circle.fill")
-                            .font(.system(size: 10))
-                        Text(Self.speedText(vm.networkSpeed))
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    }
-                    .foregroundStyle(.white.opacity(0.85))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(.black.opacity(0.45), in: Capsule())
-                    .padding(.top, 62)
-                    Spacer()
-                }
-                .allowsHitTesting(false)
-                .transition(.opacity)
-            }
-
             if vm.showControls {
                 controls
                     .transition(.opacity)
@@ -350,16 +331,6 @@ struct PlayerScreen: View {
             Spacer()
 
             Button {
-                OrientationManager.toggle()
-            } label: {
-                Image(systemName: "arrow.up.left.and.arrow.down.right")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 34, height: 34)
-                    .background(.white.opacity(0.12), in: Circle())
-            }
-
-            Button {
                 showSubtitleSearch = true
             } label: {
                 Image(systemName: "captions.bubble")
@@ -578,7 +549,7 @@ struct PlayerScreen: View {
             PlayerSeekBar(vm: vm)
                 .frame(height: 26)
 
-            HStack {
+            HStack(spacing: 8) {
                 Text((vm.isSeeking ? vm.seekTarget : vm.currentTime).timecode)
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.85))
@@ -591,9 +562,29 @@ struct PlayerScreen: View {
                 if vm.isBuffering {
                     ProgressView().controlSize(.mini).tint(.white)
                 }
+                // 下载速度（倍速前）
+                if vm.networkSpeed > 1024 {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.system(size: 10))
+                        Text(Self.speedText(vm.networkSpeed))
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    }
+                    .foregroundStyle(.white.opacity(0.75))
+                }
                 Text("\(vm.playbackRate.formatted())×")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.7))
+                // 横竖屏切换（右下角）
+                Button {
+                    OrientationManager.toggle()
+                } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 28, height: 28)
+                        .background(.white.opacity(0.12), in: Circle())
+                }
             }
             .font(.system(size: 11))
         }
