@@ -3,6 +3,7 @@ import SwiftUI
 struct DebugLogViewer: View {
     @State private var logContent = ""
     @State private var copied = false
+    @State private var showClearConfirm = false
 
     var body: some View {
         Group {
@@ -35,6 +36,13 @@ struct DebugLogViewer: View {
         .toolbar {
             ToolbarItem(placement: .fmTrailing) {
                 Button {
+                    logContent = AppDebugLog.read()
+                } label: {
+                    Label("刷新", systemImage: "arrow.clockwise")
+                }
+            }
+            ToolbarItem(placement: .fmTrailing) {
+                Button {
                     UIPasteboard.general.string = logContent
                     copied = true
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
@@ -42,6 +50,21 @@ struct DebugLogViewer: View {
                     Label("复制", systemImage: "doc.on.doc")
                 }
             }
+            ToolbarItem(placement: .fmTrailing) {
+                Button(role: .destructive) {
+                    showClearConfirm = true
+                } label: {
+                    Label("清除日志", systemImage: "trash")
+                }
+                .disabled(logContent.isEmpty)
+            }
+        }
+        .confirmationDialog("清除全部调试日志？", isPresented: $showClearConfirm, titleVisibility: .visible) {
+            Button("清除", role: .destructive) {
+                AppDebugLog.clear()
+                logContent = ""
+            }
+            Button("取消", role: .cancel) {}
         }
         .onAppear { logContent = AppDebugLog.read() }
     }
