@@ -2,6 +2,54 @@ import SwiftUI
 
 // MARK: - 通用组件
 
+/// 支持左滑露出操作按钮的行容器（用于非 List 场景）
+struct FMSwipeRow<Actions: View, Content: View>: View {
+    var actionsWidth: CGFloat = 72
+    @ViewBuilder var actions: () -> Actions
+    @ViewBuilder var content: () -> Content
+
+    @State private var offsetX: CGFloat = 0
+    @GestureState private var dragOffset: CGFloat = 0
+
+    private var currentOffset: CGFloat {
+        let base = -actionsWidth * (offsetX < -actionsWidth / 2 ? 1 : 0)
+        return min(0, max(-actionsWidth * 1.4, base + dragOffset))
+    }
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            HStack {
+                Spacer(minLength: 0)
+                actions()
+                    .frame(width: actionsWidth)
+                    .padding(.trailing, 8)
+            }
+            content()
+                .background(FMTheme.surface)
+                .offset(x: currentOffset)
+                .gesture(swipeGesture)
+                .animation(.spring(response: 0.28, dampingFraction: 0.82), value: currentOffset)
+        }
+    }
+
+    private var swipeGesture: some Gesture {
+        DragGesture(minimumDistance: 20)
+            .updating($dragOffset) { value, state, _ in
+                // 仅响应水平主导的拖动，避免干扰纵向滚动
+                guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                state = value.translation.width
+            }
+            .onEnded { value in
+                guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                let start = offsetX < -actionsWidth / 2 ? -actionsWidth : 0
+                let target = start + value.translation.width
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                    offsetX = target < -actionsWidth / 2 ? -actionsWidth : 0
+                }
+            }
+    }
+}
+
 struct SectionHeader: View {
     let title: String
     var subtitle: String? = nil

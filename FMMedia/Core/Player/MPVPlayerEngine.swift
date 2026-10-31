@@ -483,7 +483,9 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
     func setAspect(_ aspect: PlayerAspect) {
         switch aspect {
         case .auto:
-            setProperty("video-aspect-override", "-1")
+            // "-1" 已弃用，mpv 提示改用 no + container 模式
+            setProperty("video-aspect-override", "no")
+            setProperty("video-aspect-mode", "container")
             setProperty("panscan", "0")
         case .fill:
             setProperty("video-aspect-override", "-1")

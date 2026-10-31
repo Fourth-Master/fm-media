@@ -7,6 +7,7 @@ struct HomeView: View {
     @EnvironmentObject private var presenter: PlayerPresenter
 
     @State private var showAddSource = false
+    @State private var editingSource: MediaSourceConfig? = nil
     @State private var selectedDetail: MediaItem?
 
     private var continueItems: [MediaItem] {
@@ -58,6 +59,9 @@ struct HomeView: View {
             )
             .sheet(isPresented: $showAddSource) {
                 AddSourceView()
+            }
+            .sheet(item: $editingSource) { source in
+                AddSourceView(editing: source)
             }
         }
     }
@@ -190,29 +194,47 @@ struct HomeView: View {
             } else {
                 VStack(spacing: 0) {
                     ForEach(database.sources) { source in
-                        NavigationLink {
-                            FileBrowserView(source: source)
-                        } label: {
-                            HStack(spacing: 12) {
-                                SourceIcon(kind: source.kind)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(source.name)
-                                        .font(.system(size: 14, weight: .semibold))
-                                        .foregroundStyle(FMTheme.textPrimary)
-                                    Text(source.displayDetail)
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(FMTheme.textTertiary)
-                                        .lineLimit(1)
+                        FMSwipeRow(actionsWidth: 76) {
+                            Button {
+                                editingSource = source
+                            } label: {
+                                VStack(spacing: 3) {
+                                    Image(systemName: "pencil")
+                                        .font(.system(size: 15, weight: .semibold))
+                                    Text("编辑")
+                                        .font(.system(size: 10, weight: .medium))
                                 }
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(FMTheme.textTertiary)
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .background(FMTheme.accent, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                             }
+                            .buttonStyle(.plain)
                             .padding(.vertical, 10)
-                            .padding(.horizontal, 12)
+                        } content: {
+                            NavigationLink {
+                                FileBrowserView(source: source)
+                            } label: {
+                                HStack(spacing: 12) {
+                                    SourceIcon(kind: source.kind)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(source.name)
+                                            .font(.system(size: 14, weight: .semibold))
+                                            .foregroundStyle(FMTheme.textPrimary)
+                                        Text(source.displayDetail)
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(FMTheme.textTertiary)
+                                            .lineLimit(1)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(FMTheme.textTertiary)
+                                }
+                                .padding(.vertical, 10)
+                                .padding(.horizontal, 12)
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                         if source.id != database.sources.last?.id {
                             Divider().background(FMTheme.separator).padding(.leading, 60)
                         }

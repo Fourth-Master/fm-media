@@ -151,6 +151,8 @@ struct PlayerScreen: View {
         .onDisappear {
             hideTask?.cancel()
             vm.cleanup()
+            // 横屏播放退出后恢复竖屏，避免下层页面残留横屏
+            OrientationManager.set(.portrait)
         }
         .sheet(isPresented: $showSubtitlePanel) {
             SubtitleSettingsSheet(delayMs: vm.subtitleDelay,

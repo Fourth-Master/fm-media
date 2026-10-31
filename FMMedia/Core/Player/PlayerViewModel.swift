@@ -31,6 +31,8 @@ final class PlayerViewModel: ObservableObject {
     @Published var selectedVideoID: String?
     @Published private(set) var aspect: PlayerAspect = .auto
     @Published var notice: String?
+    /// 打开失败自动重试计数（每次播放最多静默重试一次）
+    private var openRetryCount = 0
 
     @Published var cues: [SubtitleCue] = []
     @Published var activeCue: SubtitleCue?
@@ -70,6 +72,7 @@ final class PlayerViewModel: ObservableObject {
         isLoading = true
         didReachEnd = false
         errorMessage = nil
+        openRetryCount = 0
         currentTime = 0
         duration = 0
         networkSpeed = 0
@@ -164,9 +167,23 @@ final class PlayerViewModel: ObservableObject {
         watchdog?.cancel()
         AppDebugLog.write("[Player] ERROR: \(message)")
 
-        // 系统内核失败时自动切 VLC，并从当前位置继续
+        // 打开失败（如负载均衡节点返回坏数据）：先静默重试一次，通常换个节点即恢复
+        if message.contains("文件或编码不受支持"), openRetryCount < 1 {
+            openRetryCount += 1
+            let position = max(currentTime, request.startAt)
+            AppDebugLog.write("[Player] 打开失败，自动重试第 \(openRetryCount) 次 @ \(position)")
+            showNotice("服务器数据异常，正在重试…")
+            isLoading = true
+            errorMessage = nil
+            buildEngine(currentKind, at: position)
+            startWatchdog()
+            return
+        }
+
         isLoading = false
-        errorMessage = message
+        errorMessage = message.contains("文件或编码不受支持")
+            ? "打开失败：服务器返回的数据异常，请稍后重试，或换一个节点/来源播放"
+            : message
     }
 
     /// 运行时切换解码方式（VLC 内核）
