@@ -250,7 +250,36 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
         let apiName = renderAPI == .gl ? "GL" : "SW"
         AppDebugLog.write("[MPV] renderAPI=" + apiName + " frameRendered=" + String(frameRendered))
         AppDebugLog.write("[MPV] loadfile: " + String(target.prefix(150)))
+        if !descriptor.url.isFileURL {
+            preflightProbe(url: descriptor.url, headers: descriptor.headers)
+        }
         startSpeedSampling()
+    }
+
+    /// HTTP 预检探针：用 URLSession 直接请求首字节（Range 0-1），测量 TTFB/状态码，
+    /// 与 mpv 内部网络栈（ffmpeg）对比定位“demuxer 卡住”是服务器慢还是 mpv 配置问题
+    private func preflightProbe(url: URL, headers: [String: String]) {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+        for (key, value) in headers {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        request.setValue("bytes=0-1", forHTTPHeaderField: "Range")
+        let started = Date()
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            let elapsed = Int(Date().timeIntervalSince(started) * 1000)
+            if let error {
+                AppDebugLog.write("[MPV] 预检失败(\(elapsed)ms): \(error.localizedDescription)")
+                return
+            }
+            let http = response as? HTTPURLResponse
+            let status = http?.statusCode ?? -1
+            let contentType = http?.value(forHTTPHeaderField: "Content-Type") ?? "-"
+            let contentRange = http?.value(forHTTPHeaderField: "Content-Range") ?? "-"
+            let contentLength = http?.value(forHTTPHeaderField: "Content-Length") ?? "-"
+            let bytes = data?.count ?? 0
+            AppDebugLog.write("[MPV] 预检(\(elapsed)ms): status=\(status) bytes=\(bytes) type=\(contentType) range=\(contentRange) len=\(contentLength)")
+        }.resume()
     }
 
     func play() { setProperty("pause", "no") }
@@ -265,6 +294,26 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
     }
 
     func makeView() -> UIView { containerView }
+
+    /// 诊断：转储 mpv 核心状态（看门狗超时时调用，定位 demuxer 卡在哪个环节）
+    func debugDumpState() {
+        guard let handle else {
+            AppDebugLog.write("[MPV] 状态转储: 无 mpv 实例")
+            return
+        }
+        let keys = ["path", "filename", "core-idle", "paused-for-cache",
+                    "cache-buffering-state", "seekable", "eof-reached",
+                    "demuxer-cache-time", "demuxer-via-network", "video-format"]
+        for key in keys {
+            guard let value = mpv_get_property_string(handle, key) else {
+                AppDebugLog.write("[MPV] 状态 \(key)=<n/a>")
+                continue
+            }
+            let text = String(cString: value)
+            mpv_free(UnsafeMutableRawPointer(mutating: value))
+            AppDebugLog.write("[MPV] 状态 \(key)=\(text)")
+        }
+    }
 
     func teardown() {
         stopSpeedSampling()
@@ -429,30 +478,38 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
 
     // MARK: - mpv 生命周期
 
+    /// 设置选项并校验返回值（选项名错误/不支持时静默失败会导致排查困难）
+    private func setOption(_ ctx: OpaquePointer, _ name: String, _ value: String) {
+        let result = mpv_set_option_string(ctx, name, value)
+        if result < 0 {
+            AppDebugLog.write("[MPV] 选项设置失败 \(name)=\(value) code=\(result)")
+        }
+    }
+
     private func createMPVIfNeeded() -> Bool {
         if handle != nil { return true }
         let ctx = mpv_create()
         AppDebugLog.write("[MPV] mpv_create: \(ctx != nil)")
         guard let ctx else { return false }
 
-        mpv_set_option_string(ctx, "vo", "libmpv")
-        mpv_set_option_string(ctx, "config", "no")
-        mpv_set_option_string(ctx, "terminal", "no")
-        mpv_set_option_string(ctx, "msg-level", "all=info")
-        mpv_set_option_string(ctx, "sub-auto", "no")
-        mpv_set_option_string(ctx, "sid", "no")
-        mpv_set_option_string(ctx, "keep-open", "no")
-        mpv_set_option_string(ctx, "input-default-bindings", "no")
-        mpv_set_option_string(ctx, "input-vo-keyboard", "no")
-        mpv_set_option_string(ctx, "osc", "no")
-        mpv_set_option_string(ctx, "hwdec", decodeMode.mpvValue)
+        setOption(ctx, "vo", "libmpv")
+        setOption(ctx, "config", "no")
+        setOption(ctx, "terminal", "no")
+        setOption(ctx, "msg-level", "all=info")
+        setOption(ctx, "sub-auto", "no")
+        setOption(ctx, "sid", "no")
+        setOption(ctx, "keep-open", "no")
+        setOption(ctx, "input-default-bindings", "no")
+        setOption(ctx, "input-vo-keyboard", "no")
+        setOption(ctx, "osc", "no")
+        setOption(ctx, "hwdec", decodeMode.mpvValue)
         AppDebugLog.write("[MPV] hwdec = \(decodeMode.mpvValue)")
-        mpv_set_option_string(ctx, "audio-client-name", "FMMedia")
-        mpv_set_option_string(ctx, "cache", "yes")
-        mpv_set_option_string(ctx, "demuxer-max-bytes", "150MiB")
-        mpv_set_option_string(ctx, "demuxer-readahead-secs", "30")
-        mpv_set_option_string(ctx, "network-timeout", "60")
-        mpv_set_option_string(ctx, "force-window", "no")
+        setOption(ctx, "audio-client-name", "FMMedia")
+        setOption(ctx, "cache", "yes")
+        setOption(ctx, "demuxer-max-bytes", "150MiB")
+        setOption(ctx, "demuxer-readahead-secs", "30")
+        setOption(ctx, "network-timeout", "60")
+        setOption(ctx, "force-window", "no")
 
         let initResult = mpv_initialize(ctx)
         AppDebugLog.write("[MPV] mpv_initialize result: \(initResult)")
@@ -466,7 +523,8 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
         mpv_observe_property(ctx, 0, "duration", MPV_FORMAT_DOUBLE)
         mpv_observe_property(ctx, 0, "pause", MPV_FORMAT_FLAG)
         mpv_observe_property(ctx, 0, "paused-for-cache", MPV_FORMAT_FLAG)
-        mpv_request_log_messages(ctx, "warn")
+        // info 级别：可看到 HTTP 连接、Opening、流加载等过程日志（排查 demuxer 卡住问题）
+        mpv_request_log_messages(ctx, "info")
         startEventLoop(ctx)
         return true
     }
@@ -586,7 +644,9 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
 
         var glInit = mpv_opengl_init_params(get_proc_address: mpvGetProcAddress,
                                             get_proc_address_ctx: nil)
-        var advancedControl: Int32 = 1
+        // 高级控制需要客户端持续消费渲染帧，否则 mpv 核心可能因背压阻塞 demux；
+        // 关闭（默认）让 mpv 独立推进，渲染回调仅负责绘制
+        var advancedControl: Int32 = 0
         let apiType = strdup(MPV_RENDER_API_TYPE_OPENGL)
         defer { if let apiType { free(apiType) } }
 

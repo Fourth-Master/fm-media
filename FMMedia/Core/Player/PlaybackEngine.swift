@@ -26,6 +26,8 @@ protocol PlaybackEngine: AnyObject {
     func seek(to seconds: Double)
     func makeView() -> UIView
     func teardown()
+    /// 诊断：转储内核内部状态到调试日志
+    func debugDumpState()
 
     func setAspect(_ aspect: PlayerAspect)
     func audioTracks() -> [PlaybackAudioTrack]
@@ -38,6 +40,7 @@ protocol PlaybackEngine: AnyObject {
 }
 
 extension PlaybackEngine {
+    func debugDumpState() {}
     func setAspect(_ aspect: PlayerAspect) {}
     func audioTracks() -> [PlaybackAudioTrack] { [] }
     func selectAudioTrack(_ id: String?) {}

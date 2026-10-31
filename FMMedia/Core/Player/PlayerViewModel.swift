@@ -209,9 +209,17 @@ final class PlayerViewModel: ObservableObject {
         watchdog?.cancel()
         let expected = engine
         watchdog = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 45_000_000_000)
+            // 12 秒无画面：提前转储内核状态（不报错，仅供诊断）
+            try? await Task.sleep(nanoseconds: 12_000_000_000)
             guard !Task.isCancelled, let self else { return }
-            guard self.engine === expected, self.errorMessage == nil, self.currentTime < 0.5 else { return }
+            if self.engine === expected, self.currentTime < 0.5 {
+                AppDebugLog.write("[Player] 12 秒无画面，转储内核状态")
+                self.engine.debugDumpState()
+            }
+            // 45 秒无画面：报错并再次转储
+            try? await Task.sleep(nanoseconds: 33_000_000_000)
+            guard !Task.isCancelled, self.engine === expected, self.errorMessage == nil, self.currentTime < 0.5 else { return }
+            self.engine.debugDumpState()
             self.handleEngineError("打开视频超时（45 秒无画面），可尝试切换软件解码或 VLC 内核")
         }
     }
