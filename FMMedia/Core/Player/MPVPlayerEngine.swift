@@ -240,6 +240,8 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
         } else {
             let fields = descriptor.headers.map { "\($0.key): \($0.value)" }.joined(separator: ",")
             setProperty("http-header-fields", fields)
+            // 只记录头名称（不打印值，避免泄露密钥），用于验证 WebDAV 等鉴权是否携带
+            AppDebugLog.write("[MPV] 请求头: " + descriptor.headers.keys.joined(separator: ", "))
         }
         setProperty("pause", "no")
         setProperty("speed", String(format: "%.2f", rate))

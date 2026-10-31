@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 /// 全局调试日志：写入 Documents 目录，可在系统「文件」App 中查看
 enum AppDebugLog {
@@ -21,7 +22,7 @@ enum AppDebugLog {
         lock.unlock()
         // 注意：必须在锁外调用 write（write 会再次加锁，锁内调用会死锁）
         if on {
-            write("=== 调试日志开启 ===")
+            write("=== 调试日志开启 === App v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?") · iOS \(UIDevice.current.systemVersion) · \(UIDevice.current.model)")
             trimIfNeeded()
         }
     }

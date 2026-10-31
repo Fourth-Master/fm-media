@@ -77,6 +77,7 @@ final class PlayerViewModel: ObservableObject {
         selectedAudioID = nil
         videoTracks = []
         selectedVideoID = nil
+        AppDebugLog.write("[Player] start kind=\(preferred.rawValue) decode=\(decode.rawValue) ext=\(streamExtension)")
 
         var kind = preferred
 
@@ -111,6 +112,7 @@ final class PlayerViewModel: ObservableObject {
         engine = newEngine
         engineName = newEngine.name
         engineID = UUID()
+        AppDebugLog.write("[Player] engine=\(newEngine.name) kind=\(kind.rawValue) startAt=\(position)")
         wire(newEngine)
         newEngine.load(request.stream, startAt: position, rate: playbackRate)
         newEngine.setAspect(aspect)
@@ -160,10 +162,9 @@ final class PlayerViewModel: ObservableObject {
 
     private func handleEngineError(_ message: String) {
         watchdog?.cancel()
+        AppDebugLog.write("[Player] ERROR: \(message)")
 
         // 系统内核失败时自动切 VLC，并从当前位置继续
-        isLoading = false
-        errorMessage = message
         isLoading = false
         errorMessage = message
     }
@@ -176,9 +177,10 @@ final class PlayerViewModel: ObservableObject {
         let kind: PlaybackEngineKind = currentKind
         isLoading = true
         errorMessage = nil
+        AppDebugLog.write("[Player] 切换解码方式: \(mode.rawValue) @ \(position)")
         buildEngine(kind, at: position)
         startWatchdog()
-        showNotice("解码方式：(mode.title)")
+        showNotice("解码方式：\(mode.title)")
     }
 
     /// 硬解失败：自动切换软解并续播
@@ -188,6 +190,7 @@ final class PlayerViewModel: ObservableObject {
         let position = max(currentTime, request.startAt)
         isLoading = true
         errorMessage = nil
+        AppDebugLog.write("[Player] 硬解失败，自动切换软解 @ \(position)")
         showNotice("硬件解码失败，已切换为软件解码")
         buildEngine(currentKind, at: position)
         startWatchdog()
