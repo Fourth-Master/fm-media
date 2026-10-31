@@ -19,6 +19,10 @@ private enum MPVEventPayload {
 }
 
 private func parseMPVEvent(_ event: mpv_event) -> MPVEventPayload? {
+    if event.event_id == MPV_EVENT_START_FILE {
+        AppDebugLog.write("[MPV] START_FILE（核心开始加载文件）")
+        return nil
+    }
     if event.event_id == MPV_EVENT_FILE_LOADED { return .fileLoaded }
     if event.event_id == MPV_EVENT_END_FILE {
         if let data = event.data {
@@ -243,6 +247,10 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
             // 只记录头名称（不打印值，避免泄露密钥），用于验证 WebDAV 等鉴权是否携带
             AppDebugLog.write("[MPV] 请求头: " + descriptor.headers.keys.joined(separator: ", "))
         }
+        if !descriptor.url.isFileURL {
+            // 部分服务器/WAF 拦截 ffmpeg 默认 UA（Lavf），统一用浏览器 UA
+            setProperty("user-agent", Self.browserUserAgent)
+        }
         setProperty("pause", "no")
         setProperty("speed", String(format: "%.2f", rate))
         let target = descriptor.url.isFileURL ? descriptor.url.path : descriptor.url.absoluteString
@@ -250,26 +258,37 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
         let apiName = renderAPI == .gl ? "GL" : "SW"
         AppDebugLog.write("[MPV] renderAPI=" + apiName + " frameRendered=" + String(frameRendered))
         AppDebugLog.write("[MPV] loadfile: " + String(target.prefix(150)))
+        let loadResult = command(["loadfile", target, "replace"])
+        if loadResult < 0 {
+            AppDebugLog.write("[MPV] ERROR: loadfile 命令失败 code=\(loadResult)")
+        }
         if !descriptor.url.isFileURL {
-            preflightProbe(url: descriptor.url, headers: descriptor.headers)
+            preflightProbe(url: descriptor.url, headers: descriptor.headers, userAgent: nil, tag: "默认UA")
+            preflightProbe(url: descriptor.url, headers: descriptor.headers, userAgent: Self.browserUserAgent, tag: "浏览器UA")
         }
         startSpeedSampling()
     }
 
+    /// 常见浏览器 UA：部分服务器/WAF 对非浏览器 UA 的文件请求返回 403/451
+    static let browserUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.4 Mobile/15E148 Safari/604.1"
+
     /// HTTP 预检探针：用 URLSession 直接请求首字节（Range 0-1），测量 TTFB/状态码，
     /// 与 mpv 内部网络栈（ffmpeg）对比定位“demuxer 卡住”是服务器慢还是 mpv 配置问题
-    private func preflightProbe(url: URL, headers: [String: String]) {
+    private func preflightProbe(url: URL, headers: [String: String], userAgent: String?, tag: String) {
         var request = URLRequest(url: url)
         request.timeoutInterval = 15
         for (key, value) in headers {
             request.setValue(value, forHTTPHeaderField: key)
+        }
+        if let userAgent {
+            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         }
         request.setValue("bytes=0-1", forHTTPHeaderField: "Range")
         let started = Date()
         URLSession.shared.dataTask(with: request) { data, response, error in
             let elapsed = Int(Date().timeIntervalSince(started) * 1000)
             if let error {
-                AppDebugLog.write("[MPV] 预检失败(\(elapsed)ms): \(error.localizedDescription)")
+                AppDebugLog.write("[MPV] 预检[\(tag)]失败(\(elapsed)ms): \(error.localizedDescription)")
                 return
             }
             let http = response as? HTTPURLResponse
@@ -278,7 +297,14 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
             let contentRange = http?.value(forHTTPHeaderField: "Content-Range") ?? "-"
             let contentLength = http?.value(forHTTPHeaderField: "Content-Length") ?? "-"
             let bytes = data?.count ?? 0
-            AppDebugLog.write("[MPV] 预检(\(elapsed)ms): status=\(status) bytes=\(bytes) type=\(contentType) range=\(contentRange) len=\(contentLength)")
+            AppDebugLog.write("[MPV] 预检[\(tag)](\(elapsed)ms): status=\(status) bytes=\(bytes) type=\(contentType) range=\(contentRange) len=\(contentLength)")
+            // 非 2xx 时输出响应体前 200 字符（服务器拦截原因通常写在 body 里）
+            if !(200..<300).contains(status), let data, let body = String(data: data.prefix(200), encoding: .utf8) {
+                let cleaned = body.replacingOccurrences(of: "\n", with: " ").trimmed
+                if !cleaned.isEmpty {
+                    AppDebugLog.write("[MPV] 预检[\(tag)]响应体: \(cleaned)")
+                }
+            }
         }.resume()
     }
 
@@ -587,8 +613,9 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
         mpv_set_property_string(handle, name, value)
     }
 
-    private func command(_ arguments: [String]) {
-        guard let handle else { return }
+    @discardableResult
+    private func command(_ arguments: [String]) -> Int32 {
+        guard let handle else { return -3 }
         let allocated = arguments.map { strdup($0) }
         var pointers: [UnsafePointer<CChar>?] = allocated.map { $0.map { UnsafePointer($0) } }
         pointers.append(nil)
@@ -597,7 +624,7 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
                 if let pointer { free(pointer) }
             }
         }
-        mpv_command(handle, &pointers)
+        return mpv_command(handle, &pointers)
     }
 
     // MARK: - 渲染
