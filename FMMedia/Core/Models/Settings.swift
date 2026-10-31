@@ -35,6 +35,7 @@ struct SettingsData: Codable, Equatable {
     var enableGenreCategories: Bool = true
     /// 标题是否完整显示（多行不截断）
     var showFullTitle: Bool = false
+    var debugLogEnabled: Bool = false
     /// 媒体库标题显示方式
     var titleDisplay: TitleDisplayMode? = nil
     /// 自定义模式下的小标题字段（可多选）
@@ -97,6 +98,7 @@ final class AppSettings: ObservableObject {
         } else {
             data = SettingsData()
         }
+        AppDebugLog.setEnabled(data.debugLogEnabled)
     }
 
     private func scheduleSave() {

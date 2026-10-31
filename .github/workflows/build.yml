@@ -1,0 +1,94 @@
+name: Build IPA
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build unsigned IPA (TrollStore)
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Toolchain info
+        run: |
+          xcodebuild -version
+          xcodebuild -project "FMMedia.xcodeproj" -list
+
+      - name: Cache MobileVLCKit
+        uses: actions/cache@v6
+        with:
+          path: Vendor
+          key: mobilevlckit-3.7.4
+
+      - name: Fetch MobileVLCKit
+        run: |
+          chmod +x scripts/fetch-vlckit.sh
+          ./scripts/fetch-vlckit.sh
+
+      - name: Build (unsigned, Release)
+        run: |
+          set -o pipefail
+          LOG="$RUNNER_TEMP/xcodebuild.log"
+          xcodebuild \
+            -project "FMMedia.xcodeproj" \
+            -scheme "FMMedia" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath "$RUNNER_TEMP/build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            build 2>&1 | tee "$LOG"
+          echo "---- summary ----"
+          grep -E "(error:|BUILD SUCCEEDED|BUILD FAILED)" "$LOG" | tail -20 || true
+
+      - name: Package IPA
+        run: |
+          set -euo pipefail
+          APP_DIR="$RUNNER_TEMP/build/Build/Products/Release-iphoneos"
+          APP=$(find "$APP_DIR" -maxdepth 1 -name "*.app" | head -1)
+          if [ -z "$APP" ]; then echo "no .app"; exit 1; fi
+          VLC_FW="$APP/Frameworks/MobileVLCKit.framework"
+          if [ -d "$VLC_FW" ]; then
+            BIN="$VLC_FW/MobileVLCKit"
+            if lipo -info "$BIN" | grep -q "arm64"; then
+              lipo -thin arm64 "$BIN" -output "$BIN.thin" && mv "$BIN.thin" "$BIN"
+            fi
+            codesign --force --sign - --timestamp=none "$VLC_FW" || true
+            du -sh "$VLC_FW" || true
+          fi
+          codesign --force --sign - --timestamp=none "$APP" || true
+
+          rm -rf "$RUNNER_TEMP/Payload"
+          mkdir -p "$RUNNER_TEMP/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/Payload/"
+          cd "$RUNNER_TEMP"
+          zip -qry "FMMedia.ipa" Payload
+          echo "IPA size: $(du -h FMMedia.ipa | cut -f1)"
+          ls -l FMMedia.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v7
+        with:
+          name: FMMedia-ipa
+          path: ${{ runner.temp }}/FMMedia.ipa
+          if-no-files-found: error
+
+      - name: Publish release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: ${{ runner.temp }}/FMMedia.ipa
+          generate_release_notes: true

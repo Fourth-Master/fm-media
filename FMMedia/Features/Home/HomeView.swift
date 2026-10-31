@@ -117,6 +117,11 @@ struct HomeView: View {
                         .buttonStyle(.plain)
                         .contextMenu {
                             Button {
+                                presenter.play(media: item, startAt: item.playProgress)
+                            } label: {
+                                Label("播放", systemImage: "play.fill")
+                            }
+                            Button {
                                 selectedDetail = item
                             } label: {
                                 Label("查看详情", systemImage: "info.circle")

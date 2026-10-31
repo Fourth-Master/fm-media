@@ -15,7 +15,21 @@ enum RemoteLibraryScanner {
         }
     }
 
+    /// 根目录一级签名：条目名称 + 数量 + 大小/修改时间（单次列目录请求）
+    static func topLevelSignature(source: MediaSourceConfig) async -> String? {
+        guard let provider = try? await ProviderFactory.make(source) else { return nil }
+        guard let entries = try? await provider.list(path: provider.rootPath) else { return nil }
+        let parts = entries.map { entry -> String in
+            var line = entry.name + (entry.isDirectory ? "/d" : "/f")
+            if !entry.isDirectory { line += "/\(entry.size)" }
+            if let modified = entry.modified { line += "/\(Int(modified.timeIntervalSince1970))" }
+            return line
+        }
+        return "\(entries.count)-\(ScanFingerprint.hash(parts))"
+    }
+
     static func scan(source: MediaSourceConfig,
+                     knownFolderPaths: Set<String>? = nil,
                      progress: @escaping (String) -> Void) async -> [MediaItem] {
         guard let provider = try? await ProviderFactory.make(source) else {
             Log.error("远程扫描失败：无法创建来源 \(source.name)")
@@ -33,6 +47,7 @@ enum RemoteLibraryScanner {
         }
 
         func walk(_ path: String, depth: Int) async {
+            if let known = knownFolderPaths, known.contains(path) { return }
             guard depth <= 4, state.dirs < state.maxDirs, state.videos < state.maxVideos else { return }
             state.dirs += 1
             report()

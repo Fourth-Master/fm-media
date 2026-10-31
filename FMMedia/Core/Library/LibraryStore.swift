@@ -55,28 +55,60 @@ final class LibraryStore: ObservableObject {
         for item in keptItems { merged[item.id] = item }
 
         for (index, source) in scannable.enumerated() {
-            // 增量扫描：已扫描过且非强制的来源跳过
-            if !force, scanSignatures[source.id.uuidString] != nil {
-                scanStatus = "跳过 \(source.name)（已扫描）"
+            let key = source.id.uuidString
+            scanStatus = "检查 \(source.name)（\(index + 1)/\(scannable.count)）"
+
+            // 先取根目录一级签名：目录无变化时整个来源直接跳过（不做深层遍历）
+            let signature: String?
+            if source.kind == .local {
+                signature = await Task.detached(priority: .userInitiated) {
+                    LibraryScanner.topLevelSignature(source: source)
+                }.value
+            } else {
+                signature = await RemoteLibraryScanner.topLevelSignature(source: source)
+            }
+
+            if !force, let signature, scanSignatures[key] == signature {
+                scanStatus = "跳过 \(source.name)（目录无变化）"
                 continue
             }
+
+            // 增量模式：只扫描媒体库中还没有的番号文件夹（强制扫描时全量）
+            let knownFolderPaths: Set<String>? = force ? nil : Set(
+                items.filter { $0.sourceID == source.id }.map { $0.folderPath }
+            )
+            // 已入库条目先保留，扫描结果按 id 覆盖
+            if knownFolderPaths != nil {
+                for item in items where item.sourceID == source.id {
+                    merged[item.id] = item
+                }
+            }
+
             scanStatus = "正在扫描 \(source.name)（\(index + 1)/\(scannable.count)）"
             if source.kind == .local {
                 let summary = await Task.detached(priority: .userInitiated) {
-                    LibraryScanner.scanLocal(source: source)
+                    LibraryScanner.scanLocal(source: source, knownFolderPaths: knownFolderPaths)
                 }.value
                 for item in summary.items { merged[item.id] = item }
                 if !summary.skippedFolders.isEmpty {
                     Log.info("跳过 \(summary.skippedFolders.count) 个无视频文件夹")
                 }
+                if summary.knownSkipped > 0 {
+                    Log.info("跳过 \(summary.knownSkipped) 个已入库文件夹")
+                }
             } else {
                 let scanned = await Task.detached(priority: .userInitiated) { [weak self] in
-                    await RemoteLibraryScanner.scan(source: source, progress: { text in
+                    await RemoteLibraryScanner.scan(source: source,
+                                                    knownFolderPaths: knownFolderPaths,
+                                                    progress: { text in
                         Task { @MainActor in self?.scanStatus = text }
                     })
                 }.value
                 for item in scanned { merged[item.id] = item }
             }
+
+            // 记录签名（拿不到签名时退化为“已扫描”标记，下次仍会尝试比对）
+            scanSignatures[key] = signature ?? "scanned"
         }
 
         var result = Array(merged.values)

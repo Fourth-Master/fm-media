@@ -4,7 +4,24 @@ struct ScanSummary {
     var items: [MediaItem] = []
     var skippedFolders: [String] = []
     var scannedFolders: Int = 0
+    var knownSkipped: Int = 0
     var duration: TimeInterval = 0
+}
+
+/// 确定性指纹（FNV-1a 64 位）：不能用 hashValue，跨启动不稳定
+enum ScanFingerprint {
+    static func hash(_ parts: [String]) -> String {
+        var h: UInt64 = 0xcbf29ce484222325
+        for part in parts {
+            for byte in part.utf8 {
+                h ^= UInt64(byte)
+                h = h &* 0x100000001b3
+            }
+            h ^= 0xff
+            h = h &* 0x100000001b3
+        }
+        return String(h, radix: 16)
+    }
 }
 
 /// 依据命名约定扫描本地目录，构建智能媒体库
@@ -31,7 +48,28 @@ enum LibraryScanner {
         .isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .creationDateKey
     ]
 
-    static func scanLocal(source: MediaSourceConfig) -> ScanSummary {
+    /// 根目录一级签名：条目名称 + 数量 + 大小/修改时间（只列根目录，不做深层遍历）
+    static func topLevelSignature(source: MediaSourceConfig) -> String? {
+        guard let path = source.localPath, !path.isEmpty else { return nil }
+        let root = URL(fileURLWithPath: path, isDirectory: true)
+        var result: String?
+        ScopedAccess.withURL(root) { rootURL in
+            let children = listing(rootURL)
+            var parts: [String] = []
+            for child in children {
+                let m = meta(of: child)
+                var line = child.lastPathComponent + (m.isDirectory ? "/d" : "/f")
+                if !m.isDirectory { line += "/\(m.size)" }
+                if let modified = m.modified { line += "/\(Int(modified.timeIntervalSince1970))" }
+                parts.append(line)
+            }
+            result = "\(children.count)-\(ScanFingerprint.hash(parts))"
+        }
+        return result
+    }
+
+    /// - Parameter knownFolderPaths: 增量模式下跳过的已入库文件夹路径（nil = 全量）
+    static func scanLocal(source: MediaSourceConfig, knownFolderPaths: Set<String>? = nil) -> ScanSummary {
         let started = Date()
         var summary = ScanSummary()
         guard let path = source.localPath, !path.isEmpty else { return summary }
@@ -54,6 +92,10 @@ enum LibraryScanner {
             }
 
             for dir in directories {
+                if let known = knownFolderPaths, known.contains(dir.path) {
+                    summary.knownSkipped += 1
+                    continue
+                }
                 summary.scannedFolders += 1
                 if let item = makeFolderItem(dir, source: source) {
                     summary.items.append(item)

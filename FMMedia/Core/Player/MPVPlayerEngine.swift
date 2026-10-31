@@ -23,7 +23,7 @@ private func parseMPVEvent(_ event: mpv_event) -> MPVEventPayload? {
     if event.event_id == MPV_EVENT_END_FILE {
         if let data = event.data {
             let endFile = data.assumingMemoryBound(to: mpv_event_end_file.self).pointee
-            MPVDebugLog.write("END_FILE reason=(endFile.reason.rawValue)")
+            MPVDebugLog.write("END_FILE reason=\(endFile.reason.rawValue)")
             if endFile.reason == MPV_END_FILE_REASON_ERROR {
                 return .failure("MPV 播放失败：文件或编码不受支持")
             }
@@ -218,7 +218,7 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
 
     func load(_ descriptor: StreamDescriptor, startAt: Double, rate: Double) {
         MPVDebugLog.start()
-        MPVDebugLog.write("=== load: (descriptor.url.absoluteString.prefix(120)) decode=(decodeMode.rawValue) ===")
+        MPVDebugLog.write("=== load: \(descriptor.url.absoluteString.prefix(120)) decode=\(decodeMode.rawValue) ===")
         guard createMPVIfNeeded() else {
             MPVDebugLog.write("ERROR: mpv create/init failed")
             reportError("MPV 初始化失败")
@@ -422,13 +422,13 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
     private func createMPVIfNeeded() -> Bool {
         if handle != nil { return true }
         let ctx = mpv_create()
-        MPVDebugLog.write("mpv_create: ((ctx != nil))")
+        MPVDebugLog.write("mpv_create: \(ctx != nil)")
         guard let ctx else { return false }
 
         mpv_set_option_string(ctx, "vo", "libmpv")
         mpv_set_option_string(ctx, "config", "no")
         mpv_set_option_string(ctx, "terminal", "no")
-        mpv_set_option_string(ctx, "msg-level", "all=warn")
+        mpv_set_option_string(ctx, "msg-level", "all=info")
         mpv_set_option_string(ctx, "sub-auto", "no")
         mpv_set_option_string(ctx, "sid", "no")
         mpv_set_option_string(ctx, "keep-open", "no")
@@ -436,11 +436,16 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
         mpv_set_option_string(ctx, "input-vo-keyboard", "no")
         mpv_set_option_string(ctx, "osc", "no")
         mpv_set_option_string(ctx, "hwdec", decodeMode.mpvValue)
-        MPVDebugLog.write("hwdec = (decodeMode.mpvValue)")
+        MPVDebugLog.write("hwdec = \(decodeMode.mpvValue)")
         mpv_set_option_string(ctx, "audio-client-name", "FMMedia")
+        mpv_set_option_string(ctx, "cache", "yes")
+        mpv_set_option_string(ctx, "demuxer-max-bytes", "150MiB")
+        mpv_set_option_string(ctx, "demuxer-readahead-secs", "30")
+        mpv_set_option_string(ctx, "network-timeout", "60")
+        mpv_set_option_string(ctx, "force-window", "no")
 
         let initResult = mpv_initialize(ctx)
-        MPVDebugLog.write("mpv_initialize result: ((initResult))")
+        MPVDebugLog.write("mpv_initialize result: \(initResult)")
         guard initResult >= 0 else {
             mpv_terminate_destroy(ctx)
             return false
@@ -472,6 +477,7 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
 
     private func handle(_ payload: MPVEventPayload) {
         guard !isShuttingDown else { return }
+        AppDebugLog.write("[MPV] handle: \(payload)")
         switch payload {
         case .time(let seconds):
             lastKnownTime = seconds
@@ -499,6 +505,7 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
     }
 
     private func reportError(_ message: String) {
+        AppDebugLog.write("MPV ERROR: \(message)")
         guard !didReportError else { return }
         didReportError = true
         onError?(message)
@@ -573,7 +580,7 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
                 ]
                 var context: OpaquePointer?
                 let result = mpv_render_context_create(&context, handle, &params)
-                MPVDebugLog.write("mpv_render_context_create(GL): result=(result) context=(context != nil)")
+                MPVDebugLog.write("mpv_render_context_create(GL): result=\(result) context=\(context != nil)")
                 guard result >= 0, let context else {
                     switchToSWRender()
                     return
@@ -596,7 +603,7 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
             ]
             var context: OpaquePointer?
             let result = mpv_render_context_create(&context, handle, &params)
-            MPVDebugLog.write("mpv_render_context_create(SW): result=(result)")
+            MPVDebugLog.write("mpv_render_context_create(SW): result=\(result)")
             guard result >= 0, let context else {
                 reportError("MPV 软件渲染初始化失败")
                 return
@@ -717,7 +724,7 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
     }
 
     private func switchToSWRender() {
-        MPVDebugLog.write("switchToSWRender: frameRendered=(frameRendered)")
+        MPVDebugLog.write("switchToSWRender: frameRendered=\(frameRendered)")
         guard renderAPI == .gl else { return }
         renderAPI = .sw
         Log.info("MPV：GL 渲染无画面，切换为软件渲染")
@@ -776,10 +783,11 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
             }
         }
         frameRendered = true
+        AppDebugLog.write("MPV SW frame: \(swWidth)x\(swHeight)")
 
         if let image = swContext.makeImage() {
             swDisplayView.layer.contents = image
-            if !frameRendered { MPVDebugLog.write("SW first frame rendered, size=(swWidth)x(swHeight)") }
+            if !frameRendered { MPVDebugLog.write("SW first frame rendered, size=\(swWidth)x\(swHeight)") }
         }
     }
 

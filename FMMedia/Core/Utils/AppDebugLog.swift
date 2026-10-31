@@ -1,0 +1,70 @@
+import Foundation
+
+/// 全局调试日志：写入 Documents 目录，可在系统「文件」App 中查看
+enum AppDebugLog {
+    nonisolated(unsafe) static var enabled = false
+    private static let lock = NSLock()
+    private static var filePath: String = ""
+
+    static var documentsPath: String {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].path
+    }
+
+    static var logFileURL: URL {
+        URL(fileURLWithPath: documentsPath).appendingPathComponent("debug.log")
+    }
+
+    static func setEnabled(_ on: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        enabled = on
+        if on {
+            filePath = logFileURL.path
+            write("=== 调试日志开启 ===")
+        } else {
+            write("=== 调试日志关闭 ===")
+            filePath = ""
+        }
+    }
+
+    static func write(_ message: String) {
+        guard enabled, !filePath.isEmpty else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let line = "[\(formatter.string(from: Date()))] \(message)\n"
+        let url = URL(fileURLWithPath: filePath)
+        if let data = line.data(using: .utf8) {
+            if FileManager.default.fileExists(atPath: url.path) {
+                if let handle = try? FileHandle(forWritingTo: url) {
+                    handle.seekToEndOfFile()
+                    handle.write(data)
+                    handle.closeFile()
+                }
+            } else {
+                FileManager.default.createFile(atPath: url.path, contents: data)
+            }
+        }
+    }
+
+    static func read() -> String {
+        let url = logFileURL
+        guard FileManager.default.fileExists(atPath: url.path),
+              let data = try? Data(contentsOf: url),
+              let text = String(data: data, encoding: .utf8) else { return "" }
+        return text
+    }
+
+    static func clear() {
+        try? FileManager.default.removeItem(at: logFileURL)
+        filePath = ""
+    }
+
+    static var fileSize: Int64 {
+        let url = logFileURL
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = attrs[.size] as? Int64 else { return 0 }
+        return size
+    }
+}
