@@ -16,14 +16,13 @@ enum AppDebugLog {
 
     static func setEnabled(_ on: Bool) {
         lock.lock()
-        defer { lock.unlock() }
         enabled = on
+        filePath = on ? logFileURL.path : ""
+        lock.unlock()
+        // 注意：必须在锁外调用 write（write 会再次加锁，锁内调用会死锁）
         if on {
-            filePath = logFileURL.path
             write("=== 调试日志开启 ===")
-        } else {
-            write("=== 调试日志关闭 ===")
-            filePath = ""
+            trimIfNeeded()
         }
     }
 
@@ -57,8 +56,23 @@ enum AppDebugLog {
     }
 
     static func clear() {
+        lock.lock()
         try? FileManager.default.removeItem(at: logFileURL)
-        filePath = ""
+        filePath = enabled ? logFileURL.path : ""
+        lock.unlock()
+    }
+
+    /// 超过 2MB 时保留末尾 1MB，避免无限增长
+    static func trimIfNeeded() {
+        let url = logFileURL
+        guard fileSize > 2 * 1024 * 1024,
+              let data = try? Data(contentsOf: url) else { return }
+        let tail = data.suffix(1024 * 1024)
+        var kept = Data(tail)
+        if let newline = tail.firstIndex(of: 0x0A) {
+            kept = Data(tail[tail.index(after: newline)...])
+        }
+        FileManager.default.createFile(atPath: url.path, contents: kept)
     }
 
     static var fileSize: Int64 {

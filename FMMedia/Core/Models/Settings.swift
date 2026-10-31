@@ -1,5 +1,22 @@
 import Foundation
 
+/// 媒体库视图模式：大图（每行 2）/ 小图（每行 4）/ 内容（每行 1）
+enum LibraryViewMode: String, Codable, CaseIterable, Identifiable {
+    case large
+    case small
+    case content
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .large: return "大图"
+        case .small: return "小图"
+        case .content: return "内容"
+        }
+    }
+}
+
 /// 字幕外观与同步参数，可在播放过程中实时调整
 struct SubtitleStyle: Codable, Equatable, Hashable {
     var fontSize: Double = 20
@@ -44,6 +61,14 @@ struct SettingsData: Codable, Equatable {
     var customTitleField: TitleField? = nil
     var showSubtitleBadge: Bool = true
     var gridColumns: Int = 3
+    /// 媒体库视图模式（nil 时取 .large，保证旧配置可解码）
+    var libraryViewModeRaw: String? = nil
+
+    var libraryViewMode: LibraryViewMode {
+        get { libraryViewModeRaw.flatMap(LibraryViewMode.init(rawValue:)) ?? .large }
+        set { libraryViewModeRaw = newValue.rawValue }
+    }
+
     var maxConcurrentTransfers: Int = 2
     var preferWiFiOnly: Bool = false
     var imageCacheLimitMB: Int = 200

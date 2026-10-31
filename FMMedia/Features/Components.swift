@@ -56,6 +56,8 @@ struct StatTile: View {
 struct FMSearchField: View {
     @Binding var text: String
     var placeholder: String = "搜索番号、标题、演员"
+    /// 输入法「搜索」键（回车）触发
+    var onSubmit: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 8) {
@@ -67,6 +69,8 @@ struct FMSearchField: View {
                 .autocorrectionDisabled()
                 .foregroundStyle(FMTheme.textPrimary)
                 .font(.system(size: 14))
+                .submitLabel(.search)
+                .onSubmit { onSubmit?() }
             if !text.isEmpty {
                 Button {
                     text = ""
@@ -74,6 +78,15 @@ struct FMSearchField: View {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(FMTheme.textTertiary)
                 }
+            }
+            // 最右侧：关闭输入法
+            Button {
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                                to: nil, from: nil, for: nil)
+            } label: {
+                Image(systemName: "keyboard.chevron.compact.down")
+                    .font(.system(size: 15))
+                    .foregroundStyle(FMTheme.textTertiary)
             }
         }
         .padding(.horizontal, 12)

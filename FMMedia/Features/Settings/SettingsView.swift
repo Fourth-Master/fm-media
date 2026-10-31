@@ -136,15 +136,6 @@ struct SettingsView: View {
                 }
             }
 
-            Toggle("调试日志", isOn: $settings.data.debugLogEnabled)
-                .onChange(of: settings.data.debugLogEnabled) { AppDebugLog.setEnabled($0) }
-            if settings.data.debugLogEnabled {
-                NavigationLink {
-                    DebugLogViewer()
-                } label: {
-                    Label("查看调试日志", systemImage: "doc.text.magnifyingglass")
-                }
-            }
             Toggle("标题完整显示", isOn: $settings.data.showFullTitle)
             Toggle("版本升级后自动全量扫描", isOn: $settings.data.autoScanOnLaunch)
             Toggle("启用题材分类", isOn: $settings.data.enableGenreCategories)
@@ -499,6 +490,15 @@ struct SettingsView: View {
                 Spacer()
                 Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0")
                     .foregroundStyle(FMTheme.textTertiary)
+            }
+            Toggle("调试日志", isOn: $settings.data.debugLogEnabled)
+                .onChange(of: settings.data.debugLogEnabled) { AppDebugLog.setEnabled($0) }
+            if settings.data.debugLogEnabled {
+                NavigationLink {
+                    DebugLogViewer()
+                } label: {
+                    Label("查看调试日志", systemImage: "doc.text.magnifyingglass")
+                }
             }
         } header: {
             Text("关于")

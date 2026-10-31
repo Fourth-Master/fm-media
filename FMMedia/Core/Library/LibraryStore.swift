@@ -41,6 +41,9 @@ final class LibraryStore: ObservableObject {
         guard !isScanning else { return }
         isScanning = true
         lastError = nil
+        // 后台 / 锁屏时保持扫描继续
+        BackgroundKeepAlive.shared.begin()
+        defer { BackgroundKeepAlive.shared.end() }
 
         // 可自动扫描的来源：本机目录 + WebDAV / SMB；云盘与媒体服务器另行处理
         let scannable = sources.filter { $0.isEnabled && ($0.kind == .local || $0.kind == .webdav || $0.kind == .smb) }
