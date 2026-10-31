@@ -477,7 +477,10 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
 
     private func handle(_ payload: MPVEventPayload) {
         guard !isShuttingDown else { return }
-        AppDebugLog.write("[MPV] handle: \(payload)")
+        // time 事件高频触发，跳过以免刷爆日志
+        if case .time = payload {} else {
+            AppDebugLog.write("[MPV] handle: \(payload)")
+        }
         switch payload {
         case .time(let seconds):
             lastKnownTime = seconds
@@ -782,12 +785,15 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
                 }
             }
         }
+        let isFirstFrame = !frameRendered
         frameRendered = true
-        AppDebugLog.write("MPV SW frame: \(swWidth)x\(swHeight)")
+        if isFirstFrame {
+            AppDebugLog.write("MPV SW frame: \(width)x\(height)")
+            MPVDebugLog.write("SW first frame rendered, size=\(width)x\(height)")
+        }
 
         if let image = swContext.makeImage() {
             swDisplayView.layer.contents = image
-            if !frameRendered { MPVDebugLog.write("SW first frame rendered, size=\(swWidth)x\(swHeight)") }
         }
     }
 
