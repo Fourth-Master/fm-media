@@ -164,8 +164,14 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
     private let containerView = UIView()
     private let glView = MPVGLView()
     private let swDisplayView = UIView()
-    private var renderAPI: RenderAPI = .sw
+    private var renderAPI: RenderAPI = .gl
     private var isAttached = false
+    /// 本会话内两种渲染 API 的尝试记录（防回退循环）
+    private var triedGL = false
+    private var triedSW = false
+    /// MPVKit 构建可能不含 SW 渲染后端（render_context_create 返回 -19）
+    /// 静态标记：一旦确认缺失，整个 App 生命周期内不再尝试 SW
+    nonisolated(unsafe) static var swBuildUnsupported = false
     private var frameRendered = false
     private var glContext: EAGLContext?
     private var framebuffer: GLuint = 0
@@ -280,7 +286,9 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
         AppDebugLog.write("[MPV] === teardown ===")
         AppDebugLog.write("[MPV] === 会话结束 ===")
         isAttached = false
-        renderAPI = .sw
+        renderAPI = .gl
+        triedGL = false
+        triedSW = false
         frameRendered = false
         destroyFramebuffer()
         bufferSize = .zero
@@ -550,10 +558,17 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
     }
 
     private func attachGLRenderContext(handle: OpaquePointer) {
+        triedGL = true
         AppDebugLog.write("[MPV] attachGLRenderContext: creating EAGLContext")
+        glView.isHidden = false
+        swDisplayView.isHidden = true
         guard let eagl = EAGLContext(api: .openGLES2) else {
             AppDebugLog.write("[MPV] ERROR: EAGLContext creation failed")
-            switchToSWRender()
+            if !triedSW && !Self.swBuildUnsupported {
+                switchToSWRender()
+            } else {
+                reportError("MPV 渲染初始化失败（GL/SW 均不可用）")
+            }
             return
         }
         EAGLContext.setCurrent(eagl)
@@ -585,7 +600,11 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
                 let result = mpv_render_context_create(&context, handle, &params)
                 AppDebugLog.write("[MPV] mpv_render_context_create(GL): result=\(result) context=\(context != nil)")
                 guard result >= 0, let context else {
-                    switchToSWRender()
+                    if !triedSW && !Self.swBuildUnsupported {
+                        switchToSWRender()
+                    } else {
+                        reportError("MPV 渲染初始化失败（GL/SW 均不可用）")
+                    }
                     return
                 }
                 renderContext = context
@@ -596,6 +615,7 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
     }
 
     private func attachSWRenderContext(handle: OpaquePointer) {
+        triedSW = true
         AppDebugLog.write("[MPV] attachSWRenderContext: creating SW context")
         var apiType = strdup(MPV_RENDER_API_TYPE_SW)
         defer { if let apiType { free(apiType) } }
@@ -608,7 +628,11 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
             let result = mpv_render_context_create(&context, handle, &params)
             AppDebugLog.write("[MPV] mpv_render_context_create(SW): result=\(result)")
             guard result >= 0, let context else {
-                reportError("MPV 软件渲染初始化失败")
+                // -19 = NOT_IMPLEMENTED：MPVKit 构建不含 SW 渲染后端，记住并恢复 GL
+                Self.swBuildUnsupported = true
+                AppDebugLog.write("[MPV] SW 渲染后端不可用（result=\(result)），恢复 GL 渲染")
+                Log.info("MPV：SW 渲染后端不可用，已恢复 GL 渲染")
+                recoverGLRender()
                 return
             }
             renderContext = context
@@ -729,6 +753,10 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
     private func switchToSWRender() {
         AppDebugLog.write("[MPV] switchToSWRender: frameRendered=\(frameRendered)")
         guard renderAPI == .gl else { return }
+        if Self.swBuildUnsupported {
+            AppDebugLog.write("[MPV] SW 渲染后端不可用，保持 GL 渲染")
+            return
+        }
         renderAPI = .sw
         Log.info("MPV：GL 渲染无画面，切换为软件渲染")
         if let renderContext {
@@ -747,6 +775,27 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
         isAttached = true
         if lastKnownTime > 1 { seek(to: lastKnownTime) }
         startFallbackCheck()
+    }
+
+    /// SW 渲染后端缺失时恢复 GL 渲染（释放 SW 资源，重建 GL 上下文）
+    private func recoverGLRender() {
+        renderAPI = .gl
+        if let renderContext {
+            mpv_render_context_set_update_callback(renderContext, nil, nil)
+            mpv_render_context_free(renderContext)
+            self.renderContext = nil
+        }
+        if let swBuffer { free(swBuffer); self.swBuffer = nil }
+        swContext = nil
+        swPixelSize = .zero
+        glView.isHidden = false
+        swDisplayView.isHidden = true
+        frameRendered = false
+        if let handle {
+            attachGLRenderContext(handle: handle)
+        }
+        isAttached = true
+        if lastKnownTime > 1 { seek(to: lastKnownTime) }
     }
 
 
