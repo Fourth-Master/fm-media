@@ -134,9 +134,9 @@ struct GalaxyBackground: View {
                 Self.drawBand(context: &context, size: size)
                 Self.drawNebulae(context: &context, size: size, t: t)
                 Self.drawStars(context: &context, size: size, t: t,
-                               stars: bandStars, scale: 0.9)
+                               stars: Self.bandStars, scale: 0.9)
                 Self.drawStars(context: &context, size: size, t: t,
-                               stars: fieldStars, scale: 1.0)
+                               stars: Self.fieldStars, scale: 1.0)
                 Self.drawBrightStars(context: &context, size: size, t: t)
             }
             .background(Color(hex: 0x07080A))
