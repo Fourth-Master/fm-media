@@ -80,6 +80,9 @@ final class FileBrowserViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var query = ""
     @Published var ascending = true
+    @Published var sortKey: FileSortKey {
+        didSet { UserDefaults.standard.set(sortKey.rawValue, forKey: "fileSortKey") }
+    }
     @Published var selectMode = false
     @Published var selection: Set<String> = []
 
@@ -88,6 +91,7 @@ final class FileBrowserViewModel: ObservableObject {
 
     init(source: MediaSourceConfig) {
         self.source = source
+        sortKey = FileSortKey(rawValue: UserDefaults.standard.string(forKey: "fileSortKey") ?? "") ?? .name
     }
 
     var capabilities: ProviderCapabilities {
@@ -110,8 +114,26 @@ final class FileBrowserViewModel: ObservableObject {
         }
         result.sort { lhs, rhs in
             if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
-            let comparison = lhs.displayName.localizedStandardCompare(rhs.displayName)
-            return ascending ? comparison == .orderedAscending : comparison == .orderedDescending
+            let outcome: ComparisonResult
+            switch sortKey {
+            case .name:
+                outcome = lhs.displayName.localizedStandardCompare(rhs.displayName)
+            case .modified:
+                let l = lhs.modified ?? Date.distantPast
+                let r = rhs.modified ?? Date.distantPast
+                outcome = l == r ? .orderedSame : (l < r ? .orderedAscending : .orderedDescending)
+            case .size:
+                outcome = lhs.size == rhs.size ? .orderedSame : (lhs.size < rhs.size ? .orderedAscending : .orderedDescending)
+            case .type:
+                let l = lhs.isDirectory ? " 文件夹" : ((lhs.name as NSString).pathExtension.lowercased())
+                let r = rhs.isDirectory ? " 文件夹" : ((rhs.name as NSString).pathExtension.lowercased())
+                if l == r {
+                    outcome = lhs.displayName.localizedStandardCompare(rhs.displayName)
+                } else {
+                    outcome = l.localizedStandardCompare(r)
+                }
+            }
+            return ascending ? outcome == .orderedAscending : outcome == .orderedDescending
         }
         return result
     }

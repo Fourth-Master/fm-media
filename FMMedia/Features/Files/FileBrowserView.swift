@@ -155,6 +155,21 @@ struct FileBrowserView: View {
                 } label: {
                     Label(vm.ascending ? "升序排列" : "降序排列", systemImage: "arrow.up.arrow.down")
                 }
+                Menu {
+                    ForEach(FileSortKey.allCases) { key in
+                        Button {
+                            vm.sortKey = key
+                        } label: {
+                            if vm.sortKey == key {
+                                Label(key.title, systemImage: "checkmark")
+                            } else {
+                                Text(key.title)
+                            }
+                        }
+                    }
+                } label: {
+                    Label("排序方式：\(vm.sortKey.title)", systemImage: "arrow.up.arrow.down.circle")
+                }
                 if vm.canGoUp {
                     Button {
                         Task { await vm.goUp() }

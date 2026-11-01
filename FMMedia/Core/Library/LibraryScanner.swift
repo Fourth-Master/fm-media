@@ -331,6 +331,7 @@ enum LibraryScanner {
             item.set = nfo.set.isEmpty ? nil : nfo.set
             item.country = nfo.country.isEmpty ? nil : nfo.country
             item.cid = nfo.uniqueIDCID
+            item.nfoCode = nfo.uniqueIDNum
             item.trailer = nfo.trailer
             if item.poster == nil, let poster = nfo.posterURL, !poster.isEmpty {
                 item.poster = imageRef(for: poster, folderURL: folderURL)

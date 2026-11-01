@@ -287,6 +287,7 @@ enum RemoteLibraryScanner {
                 item.set = nfo.set.isEmpty ? nil : nfo.set
                 item.country = nfo.country.isEmpty ? nil : nfo.country
                 item.cid = nfo.uniqueIDCID
+                item.nfoCode = nfo.uniqueIDNum
                 item.trailer = nfo.trailer
                 item.durationSeconds = item.runtimeMinutes.map { Double($0) * 60 }
             }

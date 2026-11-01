@@ -86,8 +86,13 @@ enum SourceKind: String, Codable, CaseIterable, Identifiable, Hashable {
 enum LibrarySort: String, Codable, CaseIterable, Identifiable {
     case recent
     case code
+    case nfoCode
     case title
+    case fileName
+    case actor
     case rating
+    case premiere
+    case modified
     case size
     case duration
 
@@ -97,10 +102,34 @@ enum LibrarySort: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .recent: return "最近添加"
         case .code: return "番号"
+        case .nfoCode: return "NFO番号"
         case .title: return "标题"
+        case .fileName: return "文件名"
+        case .actor: return "演员"
         case .rating: return "评分"
+        case .premiere: return "发行日期"
+        case .modified: return "修改日期"
         case .size: return "文件大小"
         case .duration: return "时长"
+        }
+    }
+}
+
+/// 文件浏览排序键
+enum FileSortKey: String, Codable, CaseIterable, Identifiable {
+    case name
+    case modified
+    case size
+    case type
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .name: return "文件名"
+        case .modified: return "修改日期"
+        case .size: return "大小"
+        case .type: return "类型"
         }
     }
 }

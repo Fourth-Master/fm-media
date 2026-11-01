@@ -244,8 +244,23 @@ final class LibraryStore: ObservableObject {
         switch sort {
         case .recent: result.sort { $0.addedAt > $1.addedAt }
         case .code: result.sort { $0.code.localizedStandardCompare($1.code) == .orderedAscending }
+        case .nfoCode:
+            result.sort {
+                ($0.nfoCode ?? $0.code).localizedStandardCompare($1.nfoCode ?? $1.code) == .orderedAscending
+            }
         case .title: result.sort { $0.displayTitle.localizedStandardCompare($1.displayTitle) == .orderedAscending }
+        case .fileName:
+            result.sort {
+                ($0.video?.name ?? $0.rawName).localizedStandardCompare($1.video?.name ?? $1.rawName) == .orderedAscending
+            }
+        case .actor:
+            result.sort {
+                ($0.actors.first?.name ?? "～").localizedStandardCompare($1.actors.first?.name ?? "～") == .orderedAscending
+            }
         case .rating: result.sort { ($0.rating ?? 0) > ($1.rating ?? 0) }
+        case .premiere: result.sort { $0.releaseDate > $1.releaseDate }
+        case .modified:
+            result.sort { ($0.modifiedAt ?? $0.addedAt) > ($1.modifiedAt ?? $1.addedAt) }
         case .size: result.sort { ($0.video?.size ?? 0) > ($1.video?.size ?? 0) }
         case .duration: result.sort { ($0.durationSeconds ?? 0) > ($1.durationSeconds ?? 0) }
         }

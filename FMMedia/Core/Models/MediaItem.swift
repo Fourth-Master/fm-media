@@ -41,6 +41,8 @@ struct MediaItem: Identifiable, Hashable, Codable {
     var country: String? = nil
     /// DMM 内容 ID（NFO uniqueid type=cid）
     var cid: String? = nil
+    /// NFO 番号（NFO uniqueid type=num），排序与展示用；缺省时回退 code
+    var nfoCode: String? = nil
     /// 预告片 URL（NFO trailer）
     var trailer: String? = nil
 
