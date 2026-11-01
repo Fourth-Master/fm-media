@@ -54,7 +54,7 @@ struct DuplicatesView: View {
                             Text(deleteRemoteFiles
                                  ? "Emby/Jellyfin 通过接口删除条目（需账号有删除权限）；WebDAV/SMB 直接删除文件与同目录封面/NFO。删除失败时会保留条目。"
                                  : "仅从媒体库移除；勾选上方开关可同时删除服务器上的影片与封面/NFO。本机影片始终连文件一起删除。")
-                        }
+                        }.fmGlassListRow()
 
                         ForEach(report.groups) { group in
                             Section {
@@ -64,7 +64,7 @@ struct DuplicatesView: View {
                                 }
                             } header: {
                                 Text(group.code)
-                            }
+                            }.fmGlassListRow()
                         }
                     }
                     .listStyle(.insetGrouped)

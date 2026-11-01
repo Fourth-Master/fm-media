@@ -20,7 +20,7 @@ struct TransfersView: View {
                     List {
                         ForEach(transfers.tasks) { task in
                             TransferRow(task: task)
-                                .listRowBackground(FMTheme.surface)
+                                .fmGlassListRow()
                                 .listRowSeparatorTint(FMTheme.separator)
                         }
                     }

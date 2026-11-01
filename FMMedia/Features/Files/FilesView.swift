@@ -36,7 +36,7 @@ struct FilesView: View {
                     Text("本机")
                 } footer: {
                     Text("下载的影片会保存在这里，可在系统「文件」App 中查看。")
-                }
+                }.fmGlassListRow()
 
                 if !localSources.isEmpty {
                     Section("导入的目录") {
@@ -84,7 +84,7 @@ struct FilesView: View {
                     }
                 } footer: {
                     Text("支持 Emby、Jellyfin、飞牛影视、极空间影视、阿里云盘、百度网盘、115、天翼云盘、中国移动云盘、123 云盘、光鸭云盘、WebDAV 与 SMB。")
-                }
+                }.fmGlassListRow()
             }
             .listStyle(.insetGrouped)
             .fmScrollContentBackgroundHidden()

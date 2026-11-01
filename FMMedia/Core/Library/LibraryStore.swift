@@ -15,6 +15,8 @@ final class LibraryStore: ObservableObject {
     private(set) var lastScanAppVersion: String? = JSONStore.load(String.self, from: "scanVersion.json")
     /// 每个来源的扫描签名（用于增量扫描，跳过未变化的来源）
     private var scanSignatures: [String: String] = JSONStore.load([String: String].self, from: "scanSignatures.json") ?? [:]
+    /// 每个影片文件夹的内容签名（路径 → 签名），感知文件夹内部增删（如 extrafanart 加图）
+    private var folderSignatures: [String: String] = JSONStore.load([String: String].self, from: "folderSignatures.json") ?? [:]
     /// 强制全量扫描标记
     private var forceScanRequested = false
     @Published var query: String = ""
@@ -92,9 +94,15 @@ final class LibraryStore: ObservableObject {
             scanStatus = "正在扫描 \(source.name)（\(index + 1)/\(scannable.count)）"
             if source.kind == .local {
                 let summary = await Task.detached(priority: .userInitiated) {
-                    LibraryScanner.scanLocal(source: source, knownFolderPaths: knownFolderPaths)
+                    LibraryScanner.scanLocal(source: source,
+                                             knownFolderPaths: knownFolderPaths,
+                                             storedFolderSignatures: folderSignatures)
                 }.value
                 for item in summary.items { merged[item.id] = item }
+                // 合并本次记录的文件夹签名
+                for (path, signature) in summary.folderSignatures {
+                    folderSignatures[path] = signature
+                }
                 if !summary.skippedFolders.isEmpty {
                     Log.info("跳过 \(summary.skippedFolders.count) 个无视频文件夹")
                 }
@@ -137,6 +145,7 @@ final class LibraryStore: ObservableObject {
             scanSignatures[source.id.uuidString] = "scanned"
         }
         JSONStore.save(scanSignatures, to: "scanSignatures.json")
+        JSONStore.save(folderSignatures, to: "folderSignatures.json")
         JSONStore.save(lastScanAppVersion ?? "", to: "scanVersion.json")
     }
 
@@ -164,7 +173,12 @@ final class LibraryStore: ObservableObject {
     }
 
     func removeSourceItems(_ sourceID: UUID) {
+        let paths = Set(items.filter { $0.sourceID == sourceID }.map { $0.folderPath })
         items.removeAll { $0.sourceID == sourceID }
+        for path in paths {
+            folderSignatures.removeValue(forKey: path)
+        }
+        JSONStore.save(folderSignatures, to: "folderSignatures.json")
         persistItems()
     }
 
@@ -177,7 +191,9 @@ final class LibraryStore: ObservableObject {
     /// 强制下次扫描全量
     func forceFullRescan() {
         scanSignatures.removeAll()
+        folderSignatures.removeAll()
         JSONStore.save(scanSignatures, to: "scanSignatures.json")
+        JSONStore.save(folderSignatures, to: "folderSignatures.json")
     }
 
     func removeItems(withIDs ids: Set<String>) {

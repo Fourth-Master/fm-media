@@ -133,8 +133,12 @@ struct GalaxyBackground: View {
                 let t = timeline.date.timeIntervalSinceReferenceDate
                 Self.drawBand(context: &context, size: size)
                 Self.drawNebulae(context: &context, size: size, t: t)
-                Self.drawStars(context: &context, size: size, t: t,
-                               stars: Self.bandStars, scale: 0.9)
+                // 亮带星点整体柔化（光雾感，不呈硬圆点）
+                context.drawLayer { softLayer in
+                    softLayer.addFilter(.blur(radius: 1.4))
+                    Self.drawStars(context: &softLayer, size: size, t: t,
+                                   stars: Self.bandStars, scale: 0.9)
+                }
                 Self.drawStars(context: &context, size: size, t: t,
                                stars: Self.fieldStars, scale: 1.0)
                 Self.drawBrightStars(context: &context, size: size, t: t)
@@ -409,7 +413,8 @@ struct FMGlassListRow: ViewModifier {
         content.listRowBackground(
             Rectangle()
                 .fill(.ultraThinMaterial)
-                .overlay(Rectangle().fill(Color.white.opacity(0.05)))
+                .overlay(Rectangle().fill(Color.white.opacity(0.02)))
+                .opacity(0.72)
         )
     }
 }

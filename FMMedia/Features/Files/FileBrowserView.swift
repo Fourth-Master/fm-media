@@ -178,7 +178,7 @@ struct FileBrowserView: View {
         List {
             ForEach(vm.filteredEntries) { entry in
                 row(entry)
-                    .listRowBackground(FMTheme.surface)
+                    .fmGlassListRow()
                     .listRowSeparatorTint(FMTheme.separator)
                     .contentShape(Rectangle())
                     .onTapGesture {

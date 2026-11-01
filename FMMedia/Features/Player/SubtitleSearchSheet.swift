@@ -75,6 +75,7 @@ struct SubtitleSearchSheet: View {
                             }
                             .padding(.vertical, 6)
                         }
+                        .fmGlassListRow()
                     }
 
                     ForEach(results) { result in
@@ -85,6 +86,7 @@ struct SubtitleSearchSheet: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(downloadingID != nil)
+                        .fmGlassListRow()
                     }
                 }
                 .listStyle(.plain)

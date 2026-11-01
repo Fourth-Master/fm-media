@@ -6,6 +6,8 @@ struct ScanSummary {
     var scannedFolders: Int = 0
     var knownSkipped: Int = 0
     var duration: TimeInterval = 0
+    /// 本次扫描记录的文件夹级签名（路径 → 签名），供增量扫描判断文件夹内部变化
+    var folderSignatures: [String: String] = [:]
 }
 
 /// 确定性指纹（FNV-1a 64 位）：不能用 hashValue，跨启动不稳定
@@ -48,7 +50,8 @@ enum LibraryScanner {
         .isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .creationDateKey
     ]
 
-    /// 根目录一级签名：条目名称 + 数量 + 大小/修改时间（只列根目录，不做深层遍历）
+    /// 根目录一级签名：条目名称 + 数量 + 大小/修改时间；
+    /// 本机目录的文件夹会再附带其子条目信息（二级），用于感知文件夹内部增删（如 extrafanart 加图）
     static func topLevelSignature(source: MediaSourceConfig) -> String? {
         guard let path = source.localPath, !path.isEmpty else { return nil }
         let root = URL(fileURLWithPath: path, isDirectory: true)
@@ -61,6 +64,17 @@ enum LibraryScanner {
                 var line = child.lastPathComponent + (m.isDirectory ? "/d" : "/f")
                 if !m.isDirectory { line += "/\(m.size)" }
                 if let modified = m.modified { line += "/\(Int(modified.timeIntervalSince1970))" }
+                if m.isDirectory {
+                    let sub = listing(child)
+                    var subParts: [String] = []
+                    for subChild in sub {
+                        let sm = meta(of: subChild)
+                        var subLine = subChild.lastPathComponent + (sm.isDirectory ? "/d" : "/f")
+                        if !sm.isDirectory { subLine += "/\(sm.size)" }
+                        subParts.append(subLine)
+                    }
+                    line += "/\(sub.count)-\(ScanFingerprint.hash(subParts))"
+                }
                 parts.append(line)
             }
             result = "\(children.count)-\(ScanFingerprint.hash(parts))"
@@ -68,8 +82,26 @@ enum LibraryScanner {
         return result
     }
 
-    /// - Parameter knownFolderPaths: 增量模式下跳过的已入库文件夹路径（nil = 全量）
-    static func scanLocal(source: MediaSourceConfig, knownFolderPaths: Set<String>? = nil) -> ScanSummary {
+    /// 单个文件夹的内容签名：子条目名称 + 数量 + 大小/修改时间
+    static func folderSignature(_ dir: URL) -> String {
+        let children = listing(dir)
+        var parts: [String] = []
+        for child in children {
+            let m = meta(of: child)
+            var line = child.lastPathComponent + (m.isDirectory ? "/d" : "/f")
+            if !m.isDirectory { line += "/\(m.size)" }
+            if let modified = m.modified { line += "/\(Int(modified.timeIntervalSince1970))" }
+            parts.append(line)
+        }
+        return "\(children.count)-\(ScanFingerprint.hash(parts))"
+    }
+
+    /// - Parameters:
+    ///   - knownFolderPaths: 增量模式下已入库文件夹路径（nil = 全量）
+    ///   - storedFolderSignatures: 上次扫描记录的文件夹签名，内容未变的文件夹跳过
+    static func scanLocal(source: MediaSourceConfig,
+                          knownFolderPaths: Set<String>? = nil,
+                          storedFolderSignatures: [String: String] = [:]) -> ScanSummary {
         let started = Date()
         var summary = ScanSummary()
         guard let path = source.localPath, !path.isEmpty else { return summary }
@@ -92,7 +124,11 @@ enum LibraryScanner {
             }
 
             for dir in directories {
-                if let known = knownFolderPaths, known.contains(dir.path) {
+                let signature = folderSignature(dir)
+                summary.folderSignatures[dir.path] = signature
+                let isKnown = knownFolderPaths?.contains(dir.path) ?? false
+                if isKnown, let signature, storedFolderSignatures[dir.path] == signature {
+                    // 已入库且内容无变化
                     summary.knownSkipped += 1
                     continue
                 }
