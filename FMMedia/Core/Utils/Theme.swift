@@ -129,7 +129,7 @@ struct GalaxyBackground: View {
         let end = CGPoint(x: size.width, y: size.height * 0.3)
         let style = StrokeStyle(lineWidth: size.width * 0.22, lineCap: .round)
         context.drawLayer { layer in
-            layer.addFilter(.blur(width: 60))
+            layer.addFilter(.blur(radius: 60))
             layer.stroke(band, with: .linearGradient(gradient, startPoint: start, endPoint: end),
                          style: style)
         }
@@ -208,7 +208,7 @@ struct CloudsBackground: View {
                 cluster.addEllipse(in: CGRect(x: px - pr, y: py - pr, width: pr * 2, height: pr * 2))
             }
             context.drawLayer { layer in
-                layer.addFilter(.blur(width: 26))
+                layer.addFilter(.blur(radius: 26))
                 layer.fill(cluster, with: .color(.white.opacity(0.75)))
             }
         }
