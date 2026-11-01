@@ -93,10 +93,11 @@ final class LibraryStore: ObservableObject {
 
             scanStatus = "正在扫描 \(source.name)（\(index + 1)/\(scannable.count)）"
             if source.kind == .local {
+                let storedSignatures = folderSignatures
                 let summary = await Task.detached(priority: .userInitiated) {
                     LibraryScanner.scanLocal(source: source,
                                              knownFolderPaths: knownFolderPaths,
-                                             storedFolderSignatures: folderSignatures)
+                                             storedFolderSignatures: storedSignatures)
                 }.value
                 for item in summary.items { merged[item.id] = item }
                 // 合并本次记录的文件夹签名

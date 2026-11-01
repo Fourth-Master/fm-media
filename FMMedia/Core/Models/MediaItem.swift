@@ -31,6 +31,18 @@ struct MediaItem: Identifiable, Hashable, Codable {
     var genres: [String] = []
     var actors: [MediaActor] = []
     var tags: [String] = []
+    /// 分级（NFO mpaa）
+    var mpaa: String? = nil
+    /// 导演（NFO director）
+    var director: String? = nil
+    /// 系列（NFO set/name）
+    var set: String? = nil
+    /// 国家/地区（NFO country）
+    var country: String? = nil
+    /// DMM 内容 ID（NFO uniqueid type=cid）
+    var cid: String? = nil
+    /// 预告片 URL（NFO trailer）
+    var trailer: String? = nil
 
     var poster: ImageRef? = nil
     var fanart: ImageRef? = nil

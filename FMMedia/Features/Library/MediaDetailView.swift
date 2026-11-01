@@ -40,6 +40,7 @@ struct MediaDetailView: View {
                 actionRow
                 metaRow
                 if !current.plot.isEmpty { plotSection }
+                if hasNFOData { nfoInfoSection }
                 if settings.data.showDetailPreviews, !current.previews.isEmpty { previewSection }
                 subtitleSection
                 if !current.actors.isEmpty { actorsSection }
@@ -331,6 +332,82 @@ struct MediaDetailView: View {
                 detailRow("所在目录", current.folderPath)
                 if let source = database.source(id: current.sourceID) {
                     detailRow("来源", source.name)
+                }
+            }
+            .background(FMTheme.surface, in: RoundedRectangle(cornerRadius: FMTheme.cornerRadius, style: .continuous))
+        }
+        .padding(.horizontal, 16)
+    }
+
+    /// NFO 数据源是否提供了详情信息
+    private var hasNFOData: Bool {
+        current.originalTitle != nil || current.rating != nil ||
+        current.runtimeMinutes != nil || current.mpaa != nil ||
+        current.director != nil || current.set != nil ||
+        current.country != nil || current.cid != nil ||
+        current.trailer != nil || !current.publisher.isEmpty ||
+        !current.releaseDate.isEmpty || !current.genres.isEmpty ||
+        !current.tags.isEmpty
+    }
+
+    /// NFO 标签完整展示
+    private var nfoInfoSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(title: "影片信息")
+            VStack(spacing: 0) {
+                detailRow("番号", current.code)
+                if let original = current.originalTitle, !original.isEmpty {
+                    detailRow("原名", original)
+                }
+                if let rating = current.rating {
+                    detailRow("评分", String(format: "%.1f", rating))
+                }
+                if let minutes = current.runtimeMinutes {
+                    detailRow("时长", "\(minutes) 分钟")
+                }
+                if !current.releaseDate.isEmpty {
+                    detailRow("发行日期", current.releaseDate)
+                }
+                if !current.studio.isEmpty {
+                    detailRow("制作商", current.studio)
+                }
+                if !current.publisher.isEmpty {
+                    detailRow("发行商", current.publisher)
+                }
+                if let director = current.director {
+                    detailRow("导演", director)
+                }
+                if let set = current.set {
+                    detailRow("系列", set)
+                }
+                if let mpaa = current.mpaa {
+                    detailRow("分级", mpaa)
+                }
+                if let country = current.country, !country.isEmpty {
+                    detailRow("国家", country)
+                }
+                if let cid = current.cid {
+                    detailRow("CID", cid)
+                }
+                if let trailer = current.trailer, let url = URL(string: trailer) {
+                    HStack(alignment: .top, spacing: 10) {
+                        Text("预告片")
+                            .font(.system(size: 12))
+                            .foregroundStyle(FMTheme.textTertiary)
+                            .frame(width: 72, alignment: .leading)
+                        Link("打开预告片", destination: url)
+                            .font(.system(size: 12))
+                            .foregroundStyle(FMTheme.accent)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                }
+                if !current.genres.isEmpty {
+                    detailRow("分类", current.genres.joined(separator: " / "))
+                }
+                if !current.tags.isEmpty {
+                    detailRow("标签", current.tags.joined(separator: " / "))
                 }
             }
             .background(FMTheme.surface, in: RoundedRectangle(cornerRadius: FMTheme.cornerRadius, style: .continuous))

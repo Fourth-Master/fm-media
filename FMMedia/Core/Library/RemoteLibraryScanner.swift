@@ -273,7 +273,21 @@ enum RemoteLibraryScanner {
                 item.rating = nfo.rating
                 item.genres = nfo.genres
                 item.tags = nfo.tags
-                item.actors = nfo.actors.map { MediaActor(name: $0.name, role: $0.role) }
+                item.actors = nfo.actors.map { person in
+                    var thumb: ImageRef? = nil
+                    if let raw = person.thumb,
+                       raw.lowercased().hasPrefix("http"),
+                       let url = URL(string: raw) {
+                        thumb = ImageRef(url: url)
+                    }
+                    return MediaActor(name: person.name, role: person.role, thumb: thumb)
+                }
+                item.mpaa = nfo.mpaa.isEmpty ? nil : nfo.mpaa
+                if !nfo.directors.isEmpty { item.director = nfo.directors.joined(separator: " / ") }
+                item.set = nfo.set.isEmpty ? nil : nfo.set
+                item.country = nfo.country.isEmpty ? nil : nfo.country
+                item.cid = nfo.uniqueIDCID
+                item.trailer = nfo.trailer
                 item.durationSeconds = item.runtimeMinutes.map { Double($0) * 60 }
             }
         }

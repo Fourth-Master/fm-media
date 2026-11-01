@@ -127,7 +127,7 @@ enum LibraryScanner {
                 let signature = folderSignature(dir)
                 summary.folderSignatures[dir.path] = signature
                 let isKnown = knownFolderPaths?.contains(dir.path) ?? false
-                if isKnown, let signature, storedFolderSignatures[dir.path] == signature {
+                if isKnown, storedFolderSignatures[dir.path] == signature {
                     // 已入库且内容无变化
                     summary.knownSkipped += 1
                     continue
@@ -325,7 +325,13 @@ enum LibraryScanner {
             item.rating = nfo.rating
             item.genres = nfo.genres
             item.tags = nfo.tags
-            item.actors = nfo.actors.map { MediaActor(name: $0.name, role: $0.role) }
+            item.actors = nfo.actors.map { MediaActor(name: $0.name, role: $0.role, thumb: $0.thumb.flatMap { imageRef(for: $0, folderURL: folderURL) }) }
+            item.mpaa = nfo.mpaa.isEmpty ? nil : nfo.mpaa
+            if !nfo.directors.isEmpty { item.director = nfo.directors.joined(separator: " / ") }
+            item.set = nfo.set.isEmpty ? nil : nfo.set
+            item.country = nfo.country.isEmpty ? nil : nfo.country
+            item.cid = nfo.uniqueIDCID
+            item.trailer = nfo.trailer
             if item.poster == nil, let poster = nfo.posterURL, !poster.isEmpty {
                 item.poster = imageRef(for: poster, folderURL: folderURL)
             }

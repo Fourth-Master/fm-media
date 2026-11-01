@@ -17,6 +17,8 @@ struct NFOData {
     var studio: String = ""
     var publisher: String = ""
     var mpaa: String = ""
+    var country: String = ""
+    var set: String = ""
     var year: Int? = nil
     var premiered: String = ""
     var runtimeMinutes: Int? = nil
@@ -27,6 +29,11 @@ struct NFOData {
     var actors: [NFOPerson] = []
     var posterURL: String? = nil
     var fanartURL: String? = nil
+    /// uniqueid type=num：番号（如 MIAA-291）
+    var uniqueIDNum: String? = nil
+    /// uniqueid type=cid：DMM 内容 ID（如 miaa00291）
+    var uniqueIDCID: String? = nil
+    /// 其他类型（imdb / tmdb 等）
     var uniqueID: String? = nil
     var trailer: String? = nil
 
@@ -43,6 +50,8 @@ final class NFOParser: NSObject, XMLParserDelegate {
     private var currentActor: NFOPerson?
     private var inActor = false
     private var actorField = ""
+    private var inSet = false
+    private var uniqueIDType = ""
     private var ratingCount = 0
     private var ratingSum = 0.0
 
@@ -78,6 +87,12 @@ final class NFOParser: NSObject, XMLParserDelegate {
         if tag == "actor" {
             currentActor = NFOPerson()
             inActor = true
+        }
+        if tag == "set" {
+            inSet = true
+        }
+        if tag == "uniqueid" {
+            uniqueIDType = attributeDict["type"]?.lowercased() ?? ""
         }
         if inActor, let actor = currentActor, actor.name.isEmpty, tag == "name" {
             actorField = "name"
@@ -125,6 +140,10 @@ final class NFOParser: NSObject, XMLParserDelegate {
             data.publisher = value
         case "mpaa":
             data.mpaa = value
+        case "country":
+            if data.country.isEmpty { data.country = value }
+        case "set":
+            inSet = false
         case "year":
             data.year = Int(value)
         case "premiered", "releasedate":
@@ -145,6 +164,9 @@ final class NFOParser: NSObject, XMLParserDelegate {
             if inActor, var actor = currentActor {
                 actor.name = value
                 currentActor = actor
+            } else if inSet, data.set.isEmpty {
+                // <set><name>系列名</name></set>
+                data.set = value
             }
         case "role":
             if inActor, var actor = currentActor {
@@ -160,7 +182,12 @@ final class NFOParser: NSObject, XMLParserDelegate {
             }
             actorField = ""
         case "uniqueid":
-            if !value.isEmpty { data.uniqueID = value }
+            guard !value.isEmpty else { break }
+            switch uniqueIDType {
+            case "num": data.uniqueIDNum = value
+            case "cid": data.uniqueIDCID = value
+            default: if data.uniqueID == nil { data.uniqueID = value }
+            }
         case "trailer":
             data.trailer = value
         case "actor":
