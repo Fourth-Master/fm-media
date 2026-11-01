@@ -112,7 +112,7 @@ struct SettingsView: View {
                 }
             }
             .pickerStyle(.segmented)
-        } header: {
+        }.fmGlassListRow() header: {
             Text("外观")
         } footer: {
             Text("深色模式使用流动银河背景，浅色模式使用流动云朵背景，控件统一液态玻璃质感。")
@@ -269,7 +269,7 @@ struct SettingsView: View {
             } label: {
                 Label("清空媒体库索引", systemImage: "trash")
             }
-        } header: {
+        }.fmGlassListRow() header: {
             Text("媒体库")
         } footer: {
             if let error = library.lastError {
@@ -368,7 +368,7 @@ struct SettingsView: View {
                         .foregroundStyle(FMTheme.textTertiary)
                 }
             }
-        } header: {
+        }.fmGlassListRow() header: {
             Text("播放")
         } footer: {
             Text("MPV 内核由 FFmpeg 驱动，可播放 MKV、AVI、RMVB、WMV、FLV、TS、ISO 等全部常见格式；解码可选硬件/软件，硬解失败会自动回退软解；播放中也可在「更多」菜单临时切换。")
@@ -402,7 +402,7 @@ struct SettingsView: View {
                 Text("\(subtitles.totalCount) 个")
                     .foregroundStyle(FMTheme.textTertiary)
             }
-        } header: {
+        }.fmGlassListRow() header: {
             Text("字幕")
         } footer: {
             Text("搜索源：api-shoulei-ssl.xunlei.com 与 subtitlecat.com。下载的字幕会保存在本机并自动关联到影片。")
@@ -437,7 +437,7 @@ struct SettingsView: View {
                 Text("\(transfers.activeCount) 个任务")
                     .foregroundStyle(FMTheme.textTertiary)
             }
-        } header: {
+        }.fmGlassListRow() header: {
             Text("传输")
         } footer: {
             Text("传输速度取决于服务器带宽。暂停后继续会重新开始该任务。")
@@ -485,7 +485,7 @@ struct SettingsView: View {
                 Text(FileStore.directorySize(of: FileStore.downloads).fileSizeText)
                     .foregroundStyle(FMTheme.textTertiary)
             }
-        } header: {
+        }.fmGlassListRow() header: {
             Text("存储")
         }
     }
@@ -527,7 +527,7 @@ struct SettingsView: View {
             } label: {
                 Label("添加来源", systemImage: "plus.circle")
             }
-        } header: {
+        }.fmGlassListRow() header: {
             Text("来源")
         } footer: {
             Text("账号密码保存在系统钥匙串中，不会写入明文配置。")
@@ -563,7 +563,7 @@ struct SettingsView: View {
                     Label("查看调试日志", systemImage: "doc.text.magnifyingglass")
                 }
             }
-        } header: {
+        }.fmGlassListRow() header: {
             Text("关于")
         } footer: {
             Text("FM影媒 · 本机与远程媒体聚合播放器。请确保对所使用的媒体内容拥有合法访问权限。")

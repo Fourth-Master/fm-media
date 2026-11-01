@@ -56,29 +56,88 @@ extension UIColor {
 
 // MARK: - 动态环境背景（深色=银河，浅色=云朵）
 
-/// 深色模式：缓缓流动的银河（星点 + 星云）
+/// 深色模式：银河（固定星场闪烁 + 沿银河亮带密集星点 + 星云光晕）
 struct GalaxyBackground: View {
-    private struct Nebula {
-        let color: Color
-        let baseX: CGFloat
-        let baseY: CGFloat
-        let radiusFactor: CGFloat
-        let speed: Double
+    private struct Star {
+        let x: CGFloat        // 0~1 相对坐标
+        let y: CGFloat
+        let radius: CGFloat
+        let twinkleSpeed: Double
+        let twinklePhase: Double
+        let brightness: Double
     }
 
-    private static let nebulae: [Nebula] = [
-        Nebula(color: Color(hex: 0x3A5BD9, alpha: 0.22), baseX: 0.28, baseY: 0.22, radiusFactor: 0.7, speed: 0.05),
-        Nebula(color: Color(hex: 0x7A3AD9, alpha: 0.16), baseX: 0.75, baseY: 0.62, radiusFactor: 0.8, speed: 0.04),
-        Nebula(color: Color(hex: 0x1F6FD9, alpha: 0.12), baseX: 0.50, baseY: 0.95, radiusFactor: 0.9, speed: 0.03)
-    ]
+    /// 散布全屏的星点
+    private static let fieldStars: [Star] = Self.makeStars(count: 200, saltBase: 0)
+    /// 沿银河亮带高斯聚集的星点
+    private static let bandStars: [Star] = Self.makeBandStars(count: 260, saltBase: 5000)
+    /// 少量带光晕的亮星
+    private static let brightStars: [Star] = Self.makeStars(count: 7, saltBase: 9000)
+
+    /// 亮带路径与 drawBand 一致的三次贝塞尔
+    private static func bandPoint(t: Double) -> CGPoint {
+        let p0 = CGPoint(x: -0.1, y: 0.72)
+        let p1 = CGPoint(x: 0.35, y: 0.45)
+        let p2 = CGPoint(x: 0.65, y: 0.55)
+        let p3 = CGPoint(x: 1.10, y: 0.28)
+        let u = 1 - t
+        let x = u * u * u * p0.x + 3 * u * u * t * p1.x + 3 * u * t * t * p2.x + t * t * t * p3.x
+        let y = u * u * u * p0.y + 3 * u * u * t * p1.y + 3 * u * t * t * p2.y + t * t * t * p3.y
+        return CGPoint(x: x, y: y)
+    }
+
+    private static func makeStars(count: Int, saltBase: Double) -> [Star] {
+        var result: [Star] = []
+        for index in 0..<count {
+            let s = Double(index) + saltBase
+            let star = Star(x: CGFloat(rand(s, 12.9)),
+                            y: CGFloat(rand(s, 78.2)),
+                            radius: CGFloat(0.5 + rand(s, 9.1) * 1.2),
+                            twinkleSpeed: 0.5 + rand(s, 3.7) * 1.2,
+                            twinklePhase: s * 2.3,
+                            brightness: 0.30 + rand(s, 5.3) * 0.45)
+            result.append(star)
+        }
+        return result
+    }
+
+    private static func makeBandStars(count: Int, saltBase: Double) -> [Star] {
+        var result: [Star] = []
+        for index in 0..<count {
+            let s = Double(index) + saltBase
+            let t = rand(s, 21.7)
+            // 两个均匀随机近似高斯的垂直散布
+            let g = (rand(s, 47.1) + rand(s, 91.3) + rand(s, 33.3)) / 3.0 - 0.5
+            let offset = g * 0.16
+            let pos = bandPoint(t: t)
+            let star = Star(x: min(max(pos.x + offset * 0.25, 0), 1),
+                            y: min(max(pos.y + offset, 0), 1),
+                            radius: CGFloat(0.4 + rand(s, 13.7) * 0.9),
+                            twinkleSpeed: 0.4 + rand(s, 6.1) * 1.0,
+                            twinklePhase: s * 1.7,
+                            brightness: 0.25 + rand(s, 8.9) * 0.45)
+            result.append(star)
+        }
+        return result
+    }
+
+    private static func rand(_ seed: Double, _ salt: Double) -> Double {
+        let value = sin(seed * salt) * 43758.5453
+        let fraction = value.truncatingRemainder(dividingBy: 1)
+        return fraction < 0 ? fraction + 1 : fraction
+    }
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
             Canvas { context, size in
                 let t = timeline.date.timeIntervalSinceReferenceDate
-                Self.drawNebulae(context: &context, size: size, t: t)
-                Self.drawStars(context: &context, size: size, t: t)
                 Self.drawBand(context: &context, size: size)
+                Self.drawNebulae(context: &context, size: size, t: t)
+                Self.drawStars(context: &context, size: size, t: t,
+                               stars: bandStars, scale: 0.9)
+                Self.drawStars(context: &context, size: size, t: t,
+                               stars: fieldStars, scale: 1.0)
+                Self.drawBrightStars(context: &context, size: size, t: t)
             }
             .background(Color(hex: 0x07080A))
         }
@@ -86,35 +145,57 @@ struct GalaxyBackground: View {
     }
 
     private static func drawNebulae(context: inout GraphicsContext, size: CGSize, t: Double) {
-        for nebula in nebulae {
-            let driftX = CGFloat(0.05 * sin(t * nebula.speed))
-            let driftY = CGFloat(0.04 * cos(t * nebula.speed * 0.8))
-            let center = CGPoint(x: size.width * (nebula.baseX + driftX),
-                                 y: size.height * (nebula.baseY + driftY))
-            let radius = size.width * nebula.radiusFactor
+        // 星云沿亮带分布：取带上的三个点作为中心，缓慢呼吸
+        let specs: [(Color, Double, CGFloat)] = [
+            (Color(hex: 0x3A5BD9, alpha: 0.20), 0.22, 0.55),
+            (Color(hex: 0x7A3AD9, alpha: 0.15), 0.52, 0.65),
+            (Color(hex: 0x1F6FD9, alpha: 0.12), 0.80, 0.55)
+        ]
+        for spec in specs {
+            let breathe = 1.0 + 0.08 * sin(t * 0.12 + Double(spec.2))
+            let band = bandPoint(t: spec.1)
+            let center = CGPoint(x: band.x * size.width,
+                                 y: band.y * size.height)
+            let radius = size.width * spec.2 * CGFloat(breathe)
             let rect = CGRect(x: center.x - radius, y: center.y - radius,
                               width: radius * 2, height: radius * 2)
-            let gradient = Gradient(colors: [nebula.color, .clear])
+            let gradient = Gradient(colors: [spec.0, .clear])
             context.fill(Path(ellipseIn: rect),
                          with: .radialGradient(gradient, center: center,
                                                startRadius: 0, endRadius: radius))
         }
     }
 
-    private static func drawStars(context: inout GraphicsContext, size: CGSize, t: Double) {
-        for index in 0..<150 {
-            let seed = Double(index)
-            let baseX = CGFloat(pseudoRandom(seed: seed, salt: 12.9898))
-            let baseY = CGFloat(pseudoRandom(seed: seed, salt: 78.233))
-            let speed = 4.0 + (sin(seed * 3.7) * 0.5 + 0.5) * 10.0
-            let x = baseX * size.width
-            let rawY = baseY * size.height + CGFloat(t * speed)
-            let y = rawY.truncatingRemainder(dividingBy: size.height)
-            let twinkle = 0.35 + 0.65 * abs(sin(t * (0.6 + seed.truncatingRemainder(dividingBy: 3)) + seed))
-            let radius = CGFloat(0.6 + (sin(seed * 9.1) * 0.5 + 0.5) * 1.1)
-            let rect = CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2)
+    private static func drawStars(context: inout GraphicsContext, size: CGSize, t: Double,
+                                  stars: [Star], scale: CGFloat) {
+        for star in stars {
+            let twinkle = 0.55 + 0.45 * sin(t * star.twinkleSpeed + star.twinklePhase)
+            let opacity = star.brightness * twinkle
+            guard opacity > 0.02 else { continue }
+            let radius = star.radius * scale
+            let rect = CGRect(x: star.x * size.width - radius,
+                              y: star.y * size.height - radius,
+                              width: radius * 2, height: radius * 2)
             context.fill(Path(ellipseIn: rect),
-                         with: .color(.white.opacity(0.55 * twinkle)))
+                         with: .color(.white.opacity(opacity)))
+        }
+    }
+
+    private static func drawBrightStars(context: inout GraphicsContext, size: CGSize, t: Double) {
+        for star in brightStars {
+            let twinkle = 0.7 + 0.3 * sin(t * star.twinkleSpeed + star.twinklePhase)
+            let center = CGPoint(x: star.x * size.width, y: star.y * size.height)
+            let haloRadius = star.radius * 8
+            let halo = CGRect(x: center.x - haloRadius, y: center.y - haloRadius,
+                              width: haloRadius * 2, height: haloRadius * 2)
+            context.fill(Path(ellipseIn: halo),
+                         with: .radialGradient(Gradient(colors: [.white.opacity(0.35 * twinkle), .clear]),
+                                               center: center, startRadius: 0, endRadius: haloRadius))
+            let coreRadius = star.radius * 1.8
+            let core = CGRect(x: center.x - coreRadius, y: center.y - coreRadius,
+                              width: coreRadius * 2, height: coreRadius * 2)
+            context.fill(Path(ellipseIn: core),
+                         with: .color(.white.opacity(0.9 * twinkle)))
         }
     }
 
@@ -127,19 +208,12 @@ struct GalaxyBackground: View {
         let gradient = Gradient(colors: [.clear, .white.opacity(0.10), .clear])
         let start = CGPoint(x: 0, y: size.height * 0.7)
         let end = CGPoint(x: size.width, y: size.height * 0.3)
-        let style = StrokeStyle(lineWidth: size.width * 0.22, lineCap: .round)
+        let style = StrokeStyle(lineWidth: size.width * 0.24, lineCap: .round)
         context.drawLayer { layer in
             layer.addFilter(.blur(radius: 60))
             layer.stroke(band, with: .linearGradient(gradient, startPoint: start, endPoint: end),
                          style: style)
         }
-    }
-
-    /// 确定性伪随机（0~1），跨帧稳定
-    private static func pseudoRandom(seed: Double, salt: Double) -> Double {
-        let value = sin(seed * salt) * 43758.5453
-        let fraction = value.truncatingRemainder(dividingBy: 1)
-        return fraction < 0 ? fraction + 1 : fraction
     }
 }
 
@@ -191,8 +265,10 @@ struct CloudsBackground: View {
 
     private static func drawClouds(context: inout GraphicsContext, size: CGSize, t: Double) {
         for spec in clouds {
-            let drift = (t * spec.speed / 60.0).truncatingRemainder(dividingBy: 1.6)
-            let xDouble = ((spec.baseX + drift).truncatingRemainder(dividingBy: 1.4) - 0.2) * Double(size.width)
+            // 环绕范围 -0.5 ~ 1.5（两屏宽）：云完全移出屏幕后才从另一侧重新进入，不会瞬移
+            let cycle = (t * spec.speed / 90.0 + spec.baseX).truncatingRemainder(dividingBy: 2.0)
+            let xNorm = cycle - 0.5
+            let xDouble = xNorm * Double(size.width)
             let yDouble = spec.baseY * Double(size.height)
                 + sin(t * 0.1 + spec.baseX * 7) * Double(size.height) * 0.012
             let x = CGFloat(xDouble)
@@ -322,5 +398,25 @@ struct FMTag: View {
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
             .background(color.opacity(0.16), in: Capsule())
+    }
+}
+
+// MARK: - List 行玻璃
+
+/// List 行液态玻璃背景（配合 fmScrollContentBackgroundHidden 使用）
+struct FMGlassListRow: ViewModifier {
+    func body(content: Content) -> some View {
+        content.listRowBackground(
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .overlay(Rectangle().fill(Color.white.opacity(0.05)))
+        )
+    }
+}
+
+extension View {
+    /// 应用于 Section 或行视图，使整组行呈现液态玻璃
+    func fmGlassListRow() -> some View {
+        modifier(FMGlassListRow())
     }
 }
