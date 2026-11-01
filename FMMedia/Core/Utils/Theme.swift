@@ -58,115 +58,160 @@ extension UIColor {
 
 /// 深色模式：缓缓流动的银河（星点 + 星云）
 struct GalaxyBackground: View {
+    private struct Nebula {
+        let color: Color
+        let baseX: CGFloat
+        let baseY: CGFloat
+        let radiusFactor: CGFloat
+        let speed: Double
+    }
+
+    private static let nebulae: [Nebula] = [
+        Nebula(color: Color(hex: 0x3A5BD9, alpha: 0.22), baseX: 0.28, baseY: 0.22, radiusFactor: 0.7, speed: 0.05),
+        Nebula(color: Color(hex: 0x7A3AD9, alpha: 0.16), baseX: 0.75, baseY: 0.62, radiusFactor: 0.8, speed: 0.04),
+        Nebula(color: Color(hex: 0x1F6FD9, alpha: 0.12), baseX: 0.50, baseY: 0.95, radiusFactor: 0.9, speed: 0.03)
+    ]
+
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
             Canvas { context, size in
                 let t = timeline.date.timeIntervalSinceReferenceDate
-
-                // 星云：两团缓慢漂移的径向渐变
-                let nebulae: [(Color, CGPoint, CGFloat, Double, Double)] = [
-                    (Color(hex: 0x3A5BD9, alpha: 0.22),
-                     CGPoint(x: size.width * (0.28 + 0.05 * sin(t * 0.05)), y: size.height * (0.22 + 0.04 * cos(t * 0.04))), size.width * 0.7, 0, 0),
-                    (Color(hex: 0x7A3AD9, alpha: 0.16),
-                     CGPoint(x: size.width * (0.75 + 0.04 * cos(t * 0.035)), y: size.height * (0.62 + 0.05 * sin(t * 0.045))), size.width * 0.8, 0, 0),
-                    (Color(hex: 0x1F6FD9, alpha: 0.12),
-                     CGPoint(x: size.width * 0.5, y: size.height * (0.95 + 0.03 * sin(t * 0.03))), size.width * 0.9, 0, 0)
-                ]
-                for (color, center, radius, _, _) in nebulae {
-                    let rect = CGRect(x: center.x - radius, y: center.y - radius,
-                                      width: radius * 2, height: radius * 2)
-                    context.fill(Path(ellipseIn: rect),
-                                 with: .radialGradient(Gradient(colors: [color, .clear]),
-                                                       center: center, startRadius: 0, endRadius: radius))
-                }
-
-                // 星点：确定性伪随机，缓慢下移闪烁
-                let count = 150
-                for index in 0..<count {
-                    let seed = Double(index)
-                    let baseX = (sin(seed * 12.9898) * 43758.5453).truncatingRemainder(dividingBy: 1)
-                    let baseY = (sin(seed * 78.233) * 12345.6789).truncatingRemainder(dividingBy: 1)
-                    let speed = 4 + (sin(seed * 3.7) * 0.5 + 0.5) * 10
-                    let x = (baseX < 0 ? baseX + 1 : baseX) * size.width
-                    let y = ((baseY < 0 ? baseY + 1 : baseY) * size.height + t * speed)
-                        .truncatingRemainder(dividingBy: size.height)
-                    let twinkle = 0.35 + 0.65 * abs(sin(t * (0.6 + seed.truncatingRemainder(dividingBy: 3)) + seed))
-                    let radius = 0.6 + (sin(seed * 9.1) * 0.5 + 0.5) * 1.1
-                    let rect = CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2)
-                    context.fill(Path(ellipseIn: rect),
-                                 with: .color(.white.opacity(0.55 * twinkle)))
-                }
-
-                // 银河亮带：斜向柔光
-                var band = Path()
-                band.move(to: CGPoint(x: -size.width * 0.1, y: size.height * 0.72))
-                band.addCurve(to: CGPoint(x: size.width * 1.1, y: size.height * 0.28),
-                              control1: CGPoint(x: size.width * 0.35, y: size.height * 0.45),
-                              control2: CGPoint(x: size.width * 0.65, y: size.height * 0.55))
-                context.drawLayer { layer in
-                    layer.addFilter(.blur(width: 60))
-                    layer.stroke(band,
-                                 with: .linearGradient(Gradient(colors: [.clear, .white.opacity(0.10), .clear]),
-                                                       startPoint: CGPoint(x: 0, y: size.height * 0.7),
-                                                       endPoint: CGPoint(x: size.width, y: size.height * 0.3)),
-                                 style: StrokeStyle(lineWidth: size.width * 0.22, lineCap: .round))
-                }
+                Self.drawNebulae(context: &context, size: size, t: t)
+                Self.drawStars(context: &context, size: size, t: t)
+                Self.drawBand(context: &context, size: size)
             }
             .background(Color(hex: 0x07080A))
         }
         .ignoresSafeArea()
     }
+
+    private static func drawNebulae(context: inout GraphicsContext, size: CGSize, t: Double) {
+        for nebula in nebulae {
+            let driftX = CGFloat(0.05 * sin(t * nebula.speed))
+            let driftY = CGFloat(0.04 * cos(t * nebula.speed * 0.8))
+            let center = CGPoint(x: size.width * (nebula.baseX + driftX),
+                                 y: size.height * (nebula.baseY + driftY))
+            let radius = size.width * nebula.radiusFactor
+            let rect = CGRect(x: center.x - radius, y: center.y - radius,
+                              width: radius * 2, height: radius * 2)
+            let gradient = Gradient(colors: [nebula.color, .clear])
+            context.fill(Path(ellipseIn: rect),
+                         with: .radialGradient(gradient, center: center,
+                                               startRadius: 0, endRadius: radius))
+        }
+    }
+
+    private static func drawStars(context: inout GraphicsContext, size: CGSize, t: Double) {
+        for index in 0..<150 {
+            let seed = Double(index)
+            let baseX = CGFloat(pseudoRandom(seed: seed, salt: 12.9898))
+            let baseY = CGFloat(pseudoRandom(seed: seed, salt: 78.233))
+            let speed = 4.0 + (sin(seed * 3.7) * 0.5 + 0.5) * 10.0
+            let x = baseX * size.width
+            let rawY = baseY * size.height + CGFloat(t * speed)
+            let y = rawY.truncatingRemainder(dividingBy: size.height)
+            let twinkle = 0.35 + 0.65 * abs(sin(t * (0.6 + seed.truncatingRemainder(dividingBy: 3)) + seed))
+            let radius = CGFloat(0.6 + (sin(seed * 9.1) * 0.5 + 0.5) * 1.1)
+            let rect = CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2)
+            context.fill(Path(ellipseIn: rect),
+                         with: .color(.white.opacity(0.55 * twinkle)))
+        }
+    }
+
+    private static func drawBand(context: inout GraphicsContext, size: CGSize) {
+        var band = Path()
+        band.move(to: CGPoint(x: -size.width * 0.1, y: size.height * 0.72))
+        band.addCurve(to: CGPoint(x: size.width * 1.1, y: size.height * 0.28),
+                      control1: CGPoint(x: size.width * 0.35, y: size.height * 0.45),
+                      control2: CGPoint(x: size.width * 0.65, y: size.height * 0.55))
+        let gradient = Gradient(colors: [.clear, .white.opacity(0.10), .clear])
+        let start = CGPoint(x: 0, y: size.height * 0.7)
+        let end = CGPoint(x: size.width, y: size.height * 0.3)
+        let style = StrokeStyle(lineWidth: size.width * 0.22, lineCap: .round)
+        context.drawLayer { layer in
+            layer.addFilter(.blur(width: 60))
+            layer.stroke(band, with: .linearGradient(gradient, startPoint: start, endPoint: end),
+                         style: style)
+        }
+    }
+
+    /// 确定性伪随机（0~1），跨帧稳定
+    private static func pseudoRandom(seed: Double, salt: Double) -> Double {
+        let value = sin(seed * salt) * 43758.5453
+        let fraction = value.truncatingRemainder(dividingBy: 1)
+        return fraction < 0 ? fraction + 1 : fraction
+    }
 }
 
 /// 浅色模式：缓缓漂移的云朵
 struct CloudsBackground: View {
+    private struct CloudSpec {
+        let baseX: Double
+        let baseY: Double
+        let widthFactor: Double
+        let heightFactor: Double
+        let speed: Double
+    }
+
+    private static let clouds: [CloudSpec] = [
+        CloudSpec(baseX: 0.15, baseY: 0.22, widthFactor: 0.30, heightFactor: 0.05, speed: 9),
+        CloudSpec(baseX: 0.55, baseY: 0.14, widthFactor: 0.36, heightFactor: 0.04, speed: 13),
+        CloudSpec(baseX: 0.85, baseY: 0.38, widthFactor: 0.28, heightFactor: 0.06, speed: 7),
+        CloudSpec(baseX: 0.30, baseY: 0.58, widthFactor: 0.42, heightFactor: 0.045, speed: 11),
+        CloudSpec(baseX: 0.70, baseY: 0.78, widthFactor: 0.34, heightFactor: 0.055, speed: 15),
+        CloudSpec(baseX: 0.10, baseY: 0.88, widthFactor: 0.30, heightFactor: 0.05, speed: 10)
+    ]
+
+    /// 云朵由多个椭圆鼓包组成（相对偏移与半径）
+    private static let puffs: [(Double, Double, Double)] = [
+        (-0.25, 0.10, 0.75),
+        (0.00, -0.15, 1.00),
+        (0.28, 0.05, 0.80),
+        (0.05, 0.18, 0.90)
+    ]
+
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
             Canvas { context, size in
                 let t = timeline.date.timeIntervalSinceReferenceDate
-
-                let sky = Gradient(colors: [Color(hex: 0xBBD7F5), Color(hex: 0xE9F3FC)])
-                context.fill(Path(CGRect(origin: .zero, size: size)),
-                             with: .linearGradient(sky, startPoint: .zero,
-                                                   endPoint: CGPoint(x: 0, y: size.height)))
-
-                // 云朵：不同速度横向漂移的柔光椭圆簇
-                let cloudSpecs: [(Double, Double, Double, Double, Double)] = [
-                    (0.15, 0.22, 0.30, 0.05, 9),
-                    (0.55, 0.14, 0.36, 0.04, 13),
-                    (0.85, 0.38, 0.28, 0.06, 7),
-                    (0.30, 0.58, 0.42, 0.045, 11),
-                    (0.70, 0.78, 0.34, 0.055, 15),
-                    (0.10, 0.88, 0.30, 0.05, 10)
-                ]
-                for (bx, by, w, h, speed) in cloudSpecs {
-                    let drift = (t * Double(speed) / 60.0).truncatingRemainder(dividingBy: 1.6)
-                    let x = ((bx + drift).truncatingRemainder(dividingBy: 1.4) - 0.2) * size.width
-                    let y = by * size.height + sin(t * 0.1 + bx * 7) * size.height * 0.012
-                    let cw = w * size.width
-                    let ch = h * size.height
-                    var cluster = Path()
-                    for puff in [(-0.25, 0.1, 0.75), (0.0, -0.15, 1.0), (0.28, 0.05, 0.8), (0.05, 0.18, 0.9)] {
-                        let px = x + puff.0 * cw
-                        let py = y + puff.1 * ch
-                        let pr = puff.2 * ch
-                        cluster.addEllipse(in: CGRect(x: px - pr, y: py - pr, width: pr * 2, height: pr * 2))
-                    }
-                    context.drawLayer { layer in
-                        layer.addFilter(.blur(width: 26))
-                        layer.fill(cluster, with: .color(.white.opacity(0.75)))
-                    }
-                }
+                Self.drawSky(context: &context, size: size)
+                Self.drawClouds(context: &context, size: size, t: t)
             }
             .background(Color(hex: 0xDCEBFA))
         }
         .ignoresSafeArea()
     }
-}
 
-private extension Path {
-    mutating func addEllipse(_ rect: CGRect) {
-        addEllipse(in: rect)
+    private static func drawSky(context: inout GraphicsContext, size: CGSize) {
+        let sky = Gradient(colors: [Color(hex: 0xBBD7F5), Color(hex: 0xE9F3FC)])
+        let rect = Path(CGRect(origin: .zero, size: size))
+        context.fill(rect, with: .linearGradient(sky, startPoint: .zero,
+                                                 endPoint: CGPoint(x: 0, y: size.height)))
+    }
+
+    private static func drawClouds(context: inout GraphicsContext, size: CGSize, t: Double) {
+        for spec in clouds {
+            let drift = (t * spec.speed / 60.0).truncatingRemainder(dividingBy: 1.6)
+            let xDouble = ((spec.baseX + drift).truncatingRemainder(dividingBy: 1.4) - 0.2) * Double(size.width)
+            let yDouble = spec.baseY * Double(size.height)
+                + sin(t * 0.1 + spec.baseX * 7) * Double(size.height) * 0.012
+            let x = CGFloat(xDouble)
+            let y = CGFloat(yDouble)
+            let cloudWidth = spec.widthFactor * Double(size.width)
+            let cloudHeight = spec.heightFactor * Double(size.height)
+
+            var cluster = Path()
+            for puff in puffs {
+                let px = x + CGFloat(puff.0 * cloudWidth)
+                let py = y + CGFloat(puff.1 * cloudHeight)
+                let pr = CGFloat(puff.2 * cloudHeight)
+                cluster.addEllipse(in: CGRect(x: px - pr, y: py - pr, width: pr * 2, height: pr * 2))
+            }
+            context.drawLayer { layer in
+                layer.addFilter(.blur(width: 26))
+                layer.fill(cluster, with: .color(.white.opacity(0.75)))
+            }
+        }
     }
 }
 
