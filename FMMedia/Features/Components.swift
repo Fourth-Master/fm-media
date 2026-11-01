@@ -229,12 +229,36 @@ struct LoadingBanner: View {
 // MARK: - 媒体卡片
 
 extension MediaItem {
+    /// NFO tag 标记了字幕（外挂字幕 / 内嵌字幕）
+    var hasNFOSubtitleTag: Bool {
+        let keys = ["外挂字幕", "内嵌字幕"]
+        return tags.contains { keys.contains($0.trimmed) }
+    }
+
+    /// NFO tag 中的画质标签（封面展示）：高清 / 4K / LTX
+    var qualityBadges: [String] {
+        let allowed = ["高清", "4K", "LTX"]
+        var result: [String] = []
+        for tag in tags {
+            let value = tag.trimmed
+            if allowed.contains(value) {
+                result.append(value)
+            } else if value.lowercased() == "4k" {
+                result.append("4K")
+            } else if value.lowercased() == "ltx" {
+                result.append("LTX")
+            }
+        }
+        return result
+    }
+
     /// 按设置过滤后的角标
     func displayBadges(showCracked: Bool, showSubtitle: Bool) -> [String] {
         var result: [String] = []
         if isCracked && showCracked { result.append("破解") }
-        if hasSubtitleFiles && showSubtitle { result.append("字幕") }
+        if (hasSubtitleFiles || hasNFOSubtitleTag) && showSubtitle { result.append("字幕") }
         if !isRecognized { result.append("未识别") }
+        result.append(contentsOf: qualityBadges)
         return result
     }
 }
@@ -268,7 +292,7 @@ struct PosterCard: View {
                     .frame(width: width, height: width * 1.42)
                 if !badges.isEmpty {
                     HStack(spacing: 4) {
-                        ForEach(badges.prefix(2), id: \.self) { badge in
+                        ForEach(badges.prefix(3), id: \.self) { badge in
                             Text(badge)
                                 .font(.system(size: 9, weight: .bold))
                                 .foregroundStyle(.white)

@@ -291,7 +291,7 @@ struct PosterGridCard: View {
                 .overlay(alignment: .topLeading) {
                     if !badges.isEmpty {
                         HStack(spacing: 3) {
-                            ForEach(badges.prefix(2), id: \.self) { badge in
+                            ForEach(badges.prefix(compact ? 2 : 3), id: \.self) { badge in
                                 Text(badge)
                                     .font(.system(size: compact ? 7 : 8, weight: .bold))
                                     .foregroundStyle(.white)
@@ -377,7 +377,7 @@ struct ContentRowCard: View {
                 }
                 Spacer(minLength: 0)
                 HStack(spacing: 5) {
-                    ForEach(badges.prefix(2), id: \.self) { badge in
+                    ForEach(badges.prefix(3), id: \.self) { badge in
                         Text(badge)
                             .font(.system(size: 8, weight: .bold))
                             .foregroundStyle(.white)
