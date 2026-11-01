@@ -75,7 +75,7 @@ struct DuplicatesView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .background(FMTheme.backgroundGradient.ignoresSafeArea())
+        .fmPageBackground()
         .navigationTitle("重复番号")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

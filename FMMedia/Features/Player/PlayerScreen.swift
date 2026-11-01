@@ -23,6 +23,7 @@ struct PlayerScreen: View {
     @StateObject private var vm: PlayerViewModel
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var subtitles: SubtitleLibrary
+    @EnvironmentObject private var database: AppDatabase
     @Environment(\.dismiss) private var dismiss
 
     @State private var showSubtitlePanel = false
@@ -39,6 +40,7 @@ struct PlayerScreen: View {
     @State private var hud: PlayerHUD?
     @State private var isBoosting = false
     @State private var boostBaseRate: Double = 1.0
+    @State private var showSubtitleSavePrompt = false
 
     init(request: PlaybackRequest) {
         self.request = request
@@ -144,7 +146,10 @@ struct PlayerScreen: View {
                                 itemID: itemIDForSubtitles,
                                 titleHint: request.displayTitle,
                                 media: request.media,
-                                onApply: { url in vm.applySubtitleFile(url) })
+                                onApply: { url in
+                                    vm.applySubtitleFile(url)
+                                    vm.noteOnlineSubtitle(url: url)
+                                })
         }
         .fileImporter(isPresented: $showImportSubtitle,
                       allowedContentTypes: subtitleTypes,
@@ -152,6 +157,28 @@ struct PlayerScreen: View {
             if case .success(let urls) = result, let url = urls.first {
                 vm.importSubtitle(url: url)
             }
+        }
+        .onAppear { vm.database = database }
+        .alert("保存字幕到影片目录？", isPresented: $showSubtitleSavePrompt) {
+            Button("保存") {
+                Task { await vm.savePendingSubtitle() }
+                dismiss()
+            }
+            Button("不保存", role: .cancel) {
+                vm.discardPendingSubtitle()
+                dismiss()
+            }
+        } message: {
+            Text("将把当前使用的字幕以「\(vm.pendingSubtitleTargetName)」保存到影片目录\(request.media == nil ? "" : "（\(request.media!.rawName)）")。")
+        }
+    }
+
+    /// 退出播放器：有使用中的在线字幕时先询问是否保存
+    private func closePlayer() {
+        if vm.pendingSubtitle != nil, request.media != nil {
+            showSubtitleSavePrompt = true
+        } else {
+            dismiss()
         }
     }
 
@@ -295,7 +322,7 @@ struct PlayerScreen: View {
     private var topBar: some View {
         HStack(spacing: 14) {
             Button {
-                dismiss()
+                closePlayer()
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 15, weight: .bold))
@@ -623,7 +650,7 @@ struct PlayerScreen: View {
                     }
                     .fmSecondaryButton()
                 }
-                Button("关闭") { dismiss() }
+                Button("关闭") { closePlayer() }
                     .fmSecondaryButton()
             }
             .frame(width: 280)

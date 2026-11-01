@@ -11,13 +11,38 @@ struct SettingsView: View {
     @State private var showAddSource = false
     @State private var imageCacheSize: Int64 = 0
     @State private var showClearLibrary = false
+    @State private var showClearAllCaches = false
     @State private var removingSource: MediaSourceConfig?
     @State private var editingSource: MediaSourceConfig?
     @State private var statusMessage: String?
 
+    /// 全部缓存 = Caches 目录总量（封面、字幕库、播放临时缓存等）
+    private var totalCacheSize: Int64 {
+        FileStore.directorySize(of: FileStore.caches)
+    }
+
+    private func refreshCacheSizes() {
+        imageCacheSize = RemoteImageLoader.shared.diskCacheSize()
+    }
+
+    /// 清理全部缓存：删除 Caches 目录内容并重建（保留目录本身）
+    private func clearAllCaches() {
+        let caches = FileStore.caches
+        if let items = try? FileManager.default.contentsOfDirectory(at: caches, includingPropertiesForKeys: nil) {
+            for item in items {
+                try? FileManager.default.removeItem(at: item)
+            }
+        }
+        RemoteImageLoader.shared.clearCaches()
+        subtitles.clearAll()
+        refreshCacheSizes()
+        statusMessage = "缓存已清理"
+    }
+
     var body: some View {
         FMNavigationStack {
             List {
+                appearanceSection
                 librarySection
                 playbackSection
                 subtitleSection
@@ -28,7 +53,7 @@ struct SettingsView: View {
             }
             .listStyle(.insetGrouped)
             .fmScrollContentBackgroundHidden()
-            .background(FMTheme.backgroundGradient.ignoresSafeArea())
+            .fmPageBackground()
             .navigationTitle("设置")
             .sheet(isPresented: $showSubtitleStyle) {
                 SubtitleSettingsSheet(delayMs: 0, onDelayChange: { _ in })
@@ -37,7 +62,15 @@ struct SettingsView: View {
                 AddSourceView(editing: editingSource)
             }
             .task {
-                imageCacheSize = RemoteImageLoader.shared.diskCacheSize()
+                refreshCacheSizes()
+            }
+            .confirmationDialog("清理全部缓存？", isPresented: $showClearAllCaches, titleVisibility: .visible) {
+                Button("清理", role: .destructive) {
+                    clearAllCaches()
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("将删除封面缓存、已下载字幕与临时缓存，共 \(totalCacheSize.fileSizeText)。不会影响视频与下载文件。")
             }
             .confirmationDialog("清空媒体库？", isPresented: $showClearLibrary, titleVisibility: .visible) {
                 Button("清空", role: .destructive) {
@@ -63,6 +96,26 @@ struct SettingsView: View {
             } message: {
                 Text("不会删除服务器或本机上的文件。")
             }
+        }
+    }
+
+    // MARK: - 外观
+
+    private var appearanceSection: some View {
+        Section {
+            Picker("深浅模式", selection: Binding(
+                get: { settings.data.appearance },
+                set: { settings.data.appearance = $0 }
+            )) {
+                ForEach(AppearancePreference.allCases) { pref in
+                    Text(pref.title).tag(pref)
+                }
+            }
+            .pickerStyle(.segmented)
+        } header: {
+            Text("外观")
+        } footer: {
+            Text("深色模式使用流动银河背景，浅色模式使用流动云朵背景，控件统一液态玻璃质感。")
         }
     }
 
@@ -137,6 +190,7 @@ struct SettingsView: View {
             }
 
             Toggle("标题完整显示", isOn: $settings.data.showFullTitle)
+            Toggle("详情页预览截图", isOn: $settings.data.showDetailPreviews)
             Toggle("版本升级后自动全量扫描", isOn: $settings.data.autoScanOnLaunch)
             Toggle("启用题材分类", isOn: $settings.data.enableGenreCategories)
 
@@ -395,6 +449,18 @@ struct SettingsView: View {
     private var storageSection: some View {
         Section {
             HStack {
+                Text("全部缓存")
+                Spacer()
+                Text(totalCacheSize.fileSizeText)
+                    .foregroundStyle(FMTheme.textTertiary)
+            }
+            Button {
+                showClearAllCaches = true
+            } label: {
+                Label("清理全部缓存", systemImage: "trash.slash")
+                    .foregroundStyle(FMTheme.danger)
+            }
+            HStack {
                 Text("封面缓存")
                 Spacer()
                 Text(imageCacheSize.fileSizeText)
@@ -403,11 +469,13 @@ struct SettingsView: View {
             Button {
                 RemoteImageLoader.shared.clearCaches()
                 imageCacheSize = 0
+                refreshCacheSizes()
             } label: {
                 Label("清除图片缓存", systemImage: "photo.on.rectangle.angled")
             }
             Button {
                 subtitles.clearAll()
+                refreshCacheSizes()
             } label: {
                 Label("清除已下载字幕", systemImage: "captions.bubble")
             }
@@ -567,7 +635,7 @@ struct NamingRulesView: View {
             }
             .padding(16)
         }
-        .background(FMTheme.backgroundGradient.ignoresSafeArea())
+        .fmPageBackground()
         .navigationTitle("命名规则")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -620,7 +688,7 @@ struct ProtocolSupportView: View {
             }
             .padding(16)
         }
-        .background(FMTheme.backgroundGradient.ignoresSafeArea())
+        .fmPageBackground()
         .navigationTitle("协议支持")
         .navigationBarTitleDisplayMode(.inline)
     }

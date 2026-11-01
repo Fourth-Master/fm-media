@@ -28,7 +28,7 @@ struct TransfersView: View {
                     .fmScrollContentBackgroundHidden()
                 }
             }
-            .background(FMTheme.backgroundGradient.ignoresSafeArea())
+            .fmPageBackground()
             .navigationTitle("传输")
             .toolbar {
                 ToolbarItem(placement: .fmLeading) {

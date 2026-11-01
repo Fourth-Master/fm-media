@@ -50,7 +50,7 @@ struct FileBrowserView: View {
                 selectionBar
             }
         }
-        .background(FMTheme.backgroundGradient.ignoresSafeArea())
+        .fmPageBackground()
         .navigationTitle(vm.currentName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

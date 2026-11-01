@@ -47,6 +47,86 @@ final class PlayerViewModel: ObservableObject {
     let request: PlaybackRequest
     private(set) var engine: PlaybackEngine
 
+    /// 播放器所属数据库（用于保存字幕到来源目录）
+    weak var database: AppDatabase?
+
+    // MARK: - 在线字幕保存
+
+    struct PendingSubtitle {
+        let localURL: URL
+        let name: String
+    }
+
+    /// 本次播放中通过在线搜索应用、尚未保存到影片目录的字幕
+    private(set) var pendingSubtitle: PendingSubtitle?
+
+    func noteOnlineSubtitle(url: URL) {
+        pendingSubtitle = PendingSubtitle(localURL: url, name: url.lastPathComponent)
+    }
+
+    func discardPendingSubtitle() {
+        pendingSubtitle = nil
+    }
+
+    /// 提示文案中的目标文件名（视频文件名.srt）
+    var pendingSubtitleTargetName: String {
+        guard let media = request.media else { return "" }
+        let videoName = media.video?.name ?? media.rawName
+        let base = (videoName as NSString).deletingPathExtension
+        let subExt = ((pendingSubtitle?.name as NSString?)?.pathExtension ?? "").lowercased()
+        let ext = ["srt", "ass", "ssa", "vtt"].contains(subExt) ? subExt : "srt"
+        return base + "." + ext
+    }
+
+    /// 将使用中的字幕以「视频文件名」保存到影片目录；
+    /// 远端来源要求具备写权限（WebDAV 等），无权限时不做任何操作
+    func savePendingSubtitle() async {
+        guard let pending = pendingSubtitle else { return }
+        pendingSubtitle = nil
+        guard let media = request.media else { return }
+        let targetName = pendingSubtitleTargetName
+
+        // 本机来源：视频文件在本地磁盘，直接复制到同目录
+        if let videoPath = media.video?.path, FileManager.default.fileExists(atPath: videoPath) {
+            let folderURL = URL(fileURLWithPath: media.folderPath, isDirectory: true)
+            do {
+                try ScopedAccess.withURL(folderURL) { dir in
+                    let dest = dir.appendingPathComponent(targetName)
+                    if FileManager.default.fileExists(atPath: dest.path) {
+                        try FileManager.default.removeItem(at: dest)
+                    }
+                    try FileManager.default.copyItem(at: pending.localURL, to: dest)
+                }
+                Log.info("字幕已保存到影片目录: \(targetName)")
+            } catch {
+                Log.error("字幕保存失败", error)
+            }
+            return
+        }
+
+        // 远程来源：需要来源具备写与上传能力
+        guard let sourceID = media.sourceID,
+              let config = database?.sources.first(where: { $0.id == sourceID }),
+              let provider = try? await ProviderFactory.make(config),
+              provider.capabilities.write, provider.capabilities.upload else {
+            Log.info("字幕未保存：来源不可写")
+            return
+        }
+        do {
+            // 上传按本地文件名命名，先复制为「视频文件名.字幕扩展名」的临时文件
+            let tmpDir = FileStore.caches.appendingPathComponent("SubtitleUpload", isDirectory: true)
+            try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+            let tmpFile = tmpDir.appendingPathComponent(targetName)
+            try? FileManager.default.removeItem(at: tmpFile)
+            try FileManager.default.copyItem(at: pending.localURL, to: tmpFile)
+            _ = try await provider.upload(localURL: tmpFile, to: media.folderPath, progress: { _ in })
+            try? FileManager.default.removeItem(at: tmpFile)
+            Log.info("字幕已上传到来源: \(targetName)")
+        } catch {
+            Log.error("字幕上传失败", error)
+        }
+    }
+
     private var sidecarOptions: [SubtitleOption] = []
     private var delayMs: Int = 0
     private var lastNowPlayingUpdate = Date.distantPast

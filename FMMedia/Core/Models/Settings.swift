@@ -1,5 +1,22 @@
 import Foundation
 
+/// 外观偏好：跟随系统 / 深色 / 浅色
+enum AppearancePreference: String, Codable, CaseIterable, Identifiable {
+    case system
+    case dark
+    case light
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .system: return "跟随系统"
+        case .dark: return "深色"
+        case .light: return "浅色"
+        }
+    }
+}
+
 /// 媒体库视图模式：大图（每行 2）/ 小图（每行 4）/ 内容（每行 1）
 enum LibraryViewMode: String, Codable, CaseIterable, Identifiable {
     case large
@@ -52,6 +69,15 @@ struct SettingsData: Codable, Equatable {
     var enableGenreCategories: Bool = true
     /// 标题是否完整显示（多行不截断）
     var showFullTitle: Bool = false
+    /// 详情页是否显示预览截图（extrafanart）
+    var showDetailPreviews: Bool = true
+    /// 外观偏好（nil 时跟随系统，保证旧配置可解码）
+    var appearanceRaw: String? = nil
+
+    var appearance: AppearancePreference {
+        get { appearanceRaw.flatMap(AppearancePreference.init(rawValue:)) ?? .system }
+        set { appearanceRaw = newValue.rawValue }
+    }
     var debugLogEnabled: Bool = false
     /// 媒体库标题显示方式
     var titleDisplay: TitleDisplayMode? = nil

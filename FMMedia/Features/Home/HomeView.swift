@@ -41,7 +41,7 @@ struct HomeView: View {
                 .padding(.bottom, 32)
             }
             .fmScrollIndicatorsHidden()
-            .background(FMTheme.backgroundGradient.ignoresSafeArea())
+            .fmPageBackground()
             .fmHideNavigationBar()
             .background(
                 Group {

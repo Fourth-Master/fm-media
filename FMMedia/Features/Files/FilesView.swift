@@ -88,7 +88,7 @@ struct FilesView: View {
             }
             .listStyle(.insetGrouped)
             .fmScrollContentBackgroundHidden()
-            .background(FMTheme.backgroundGradient.ignoresSafeArea())
+            .fmPageBackground()
             .navigationTitle("文件")
             .toolbar {
                 ToolbarItem(placement: .fmTrailing) {

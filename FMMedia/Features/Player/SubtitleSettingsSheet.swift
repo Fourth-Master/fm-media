@@ -98,7 +98,7 @@ struct SubtitleSettingsSheet: View {
                 }
                 .padding(16)
             }
-            .background(FMTheme.backgroundGradient.ignoresSafeArea())
+            .fmPageBackground()
             .navigationTitle("字幕调整")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

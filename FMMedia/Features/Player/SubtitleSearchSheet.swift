@@ -91,7 +91,7 @@ struct SubtitleSearchSheet: View {
                 .fmScrollContentBackgroundHidden()
             }
             .padding(.top, 8)
-            .background(FMTheme.backgroundGradient.ignoresSafeArea())
+            .fmPageBackground()
             .navigationTitle("搜索字幕")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

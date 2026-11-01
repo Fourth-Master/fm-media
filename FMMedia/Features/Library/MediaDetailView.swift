@@ -40,7 +40,7 @@ struct MediaDetailView: View {
                 actionRow
                 metaRow
                 if !current.plot.isEmpty { plotSection }
-                if !current.previews.isEmpty { previewSection }
+                if settings.data.showDetailPreviews, !current.previews.isEmpty { previewSection }
                 subtitleSection
                 if !current.actors.isEmpty { actorsSection }
                 infoSection
@@ -48,7 +48,7 @@ struct MediaDetailView: View {
             .padding(.bottom, 32)
         }
         .fmScrollIndicatorsHidden()
-        .background(FMTheme.backgroundGradient.ignoresSafeArea())
+        .fmPageBackground()
         .navigationTitle(current.code)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

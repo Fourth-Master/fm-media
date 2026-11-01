@@ -30,7 +30,7 @@ struct DebugLogViewer: View {
                 }
             }
         }
-        .background(FMTheme.backgroundGradient.ignoresSafeArea())
+        .fmPageBackground()
         .navigationTitle("调试日志")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

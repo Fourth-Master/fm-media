@@ -100,7 +100,7 @@ struct LibraryView: View {
                     }
                 }
             }
-            .background(FMTheme.backgroundGradient.ignoresSafeArea())
+            .fmPageBackground()
             .navigationTitle("媒体库")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

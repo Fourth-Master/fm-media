@@ -73,7 +73,7 @@ struct AddSourceView: View {
                 }
                 .padding(16)
             }
-            .background(FMTheme.backgroundGradient.ignoresSafeArea())
+            .fmPageBackground()
             .navigationTitle(editing == nil ? "添加来源" : "编辑来源")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
