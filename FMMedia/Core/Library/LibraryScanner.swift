@@ -345,6 +345,13 @@ enum LibraryScanner {
         item.durationSeconds = item.runtimeMinutes.map { Double($0) * 60 }
         item.addedAt = videoMeta.created ?? videoMeta.modified ?? Date()
         item.modifiedAt = meta(of: folderURL).modified
+
+        // 未识别且无封面：用视频截帧作为封面（仅本机文件）
+        if !isRecognized, item.poster == nil, mainVideo.isFileURL {
+            if let thumb = VideoThumbGenerator.generate(forVideoPath: mainVideo.path) {
+                item.poster = ImageRef(fileURL: thumb)
+            }
+        }
         return item
     }
 
