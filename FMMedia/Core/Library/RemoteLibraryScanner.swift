@@ -61,7 +61,10 @@ enum RemoteLibraryScanner {
             }
 
             let videos = entries.filter { !$0.isDirectory && $0.kind == .video }
-            let subdirs = entries.filter { $0.isDirectory && $0.name.lowercased() != "extrafanart" }
+            // subdirs 保留 extrafanart（composeItem 需要从中收集预览截图），
+            // 但遍历时跳过它（walk 内部无需深入图片目录）
+            let subdirs = entries.filter { $0.isDirectory }
+            let walkDirs = subdirs.filter { $0.name.lowercased() != "extrafanart" }
 
             if let main = pickMainVideo(videos) {
                 state.videos += videos.count
@@ -86,7 +89,7 @@ enum RemoteLibraryScanner {
             }
 
             if depth < 4 {
-                for sub in subdirs {
+                for sub in walkDirs {
                     await walk(sub.path, depth: depth + 1)
                 }
             }
@@ -250,7 +253,12 @@ enum RemoteLibraryScanner {
                 if let previewEntries = try? await provider.list(path: extraDir.path) {
                     let previews = previewEntries
                         .filter { $0.kind == .image }
-                        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+                        .sorted { lhs, rhs in
+                            let nameL = ((lhs.name as NSString).deletingPathExtension)
+                            let nameR = ((rhs.name as NSString).deletingPathExtension)
+                            if let nl = Int(nameL), let nr = Int(nameR), nl != nr { return nl < nr }
+                            return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+                        }
                         .prefix(12)
                     for preview in previews {
                         if let ref = await imageRef(preview, provider: provider) {
