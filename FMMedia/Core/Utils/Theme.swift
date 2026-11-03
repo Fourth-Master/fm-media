@@ -189,17 +189,18 @@ struct GalaxyBackground: View {
         for star in brightStars {
             let twinkle = 0.7 + 0.3 * sin(t * star.twinkleSpeed + star.twinklePhase)
             let center = CGPoint(x: star.x * size.width, y: star.y * size.height)
-            let haloRadius = star.radius * 8
+            // 光晕收敛：小而淡，避免呈现为大圆点
+            let haloRadius = star.radius * 3.5
             let halo = CGRect(x: center.x - haloRadius, y: center.y - haloRadius,
                               width: haloRadius * 2, height: haloRadius * 2)
             context.fill(Path(ellipseIn: halo),
-                         with: .radialGradient(Gradient(colors: [.white.opacity(0.35 * twinkle), .clear]),
+                         with: .radialGradient(Gradient(colors: [.white.opacity(0.16 * twinkle), .clear]),
                                                center: center, startRadius: 0, endRadius: haloRadius))
-            let coreRadius = star.radius * 1.8
+            let coreRadius = star.radius * 1.1
             let core = CGRect(x: center.x - coreRadius, y: center.y - coreRadius,
                               width: coreRadius * 2, height: coreRadius * 2)
             context.fill(Path(ellipseIn: core),
-                         with: .color(.white.opacity(0.9 * twinkle)))
+                         with: .color(.white.opacity(0.85 * twinkle)))
         }
     }
 
@@ -358,12 +359,31 @@ extension View {
                         in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(LinearGradient(colors: [.white.opacity(0.10), .white.opacity(0.03), .clear],
+                                         startPoint: .topLeading, endPoint: .bottomTrailing))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .stroke(
-                        LinearGradient(colors: [.white.opacity(0.30), .white.opacity(0.08)],
+                        LinearGradient(colors: [.white.opacity(0.32), .white.opacity(0.08)],
                                        startPoint: .topLeading, endPoint: .bottomTrailing),
                         lineWidth: 1
                     )
             )
+    }
+
+    /// 液态玻璃胶囊（chips 等）
+    func fmLiquidGlassCapsule() -> some View {
+        self
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(Capsule().stroke(.white.opacity(0.20), lineWidth: 1))
+    }
+
+    /// 液态玻璃圆形（圆钮）
+    func fmLiquidGlassCircle() -> some View {
+        self
+            .background(.ultraThinMaterial, in: Circle())
+            .overlay(Circle().stroke(.white.opacity(0.22), lineWidth: 1))
     }
 
     func fmPrimaryButton() -> some View {

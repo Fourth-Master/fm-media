@@ -130,7 +130,7 @@ struct FileBrowserView: View {
                             .foregroundStyle(crumb.id == vm.crumbs.last?.id ? FMTheme.accent : FMTheme.textTertiary)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 5)
-                            .background(FMTheme.surface, in: Capsule())
+                            .fmLiquidGlassCapsule()
                     }
                     .buttonStyle(.plain)
 
@@ -182,7 +182,7 @@ struct FileBrowserView: View {
                     .font(.system(size: 17))
                     .foregroundStyle(FMTheme.textSecondary)
                     .frame(width: 40, height: 40)
-                    .background(FMTheme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .fmLiquidGlass(cornerRadius: 12)
             }
         }
         .padding(.horizontal, 16)

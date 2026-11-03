@@ -185,7 +185,7 @@ struct MediaDetailView: View {
             .foregroundStyle(FMTheme.textSecondary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
-            .background(FMTheme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .fmLiquidGlass(cornerRadius: 12)
         }
         .buttonStyle(.plain)
     }
@@ -212,7 +212,7 @@ struct MediaDetailView: View {
             .foregroundStyle(FMTheme.textSecondary)
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
-            .background(FMTheme.surface, in: Capsule())
+            .fmLiquidGlassCapsule()
     }
 
     private var plotSection: some View {
@@ -290,7 +290,7 @@ struct MediaDetailView: View {
             Spacer()
         }
         .padding(10)
-        .background(FMTheme.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .fmLiquidGlass(cornerRadius: 10)
     }
 
     private var actorsSection: some View {
@@ -334,7 +334,7 @@ struct MediaDetailView: View {
                     detailRow("来源", source.name)
                 }
             }
-            .background(FMTheme.surface, in: RoundedRectangle(cornerRadius: FMTheme.cornerRadius, style: .continuous))
+            .fmLiquidGlass(cornerRadius: FMTheme.cornerRadius)
         }
         .padding(.horizontal, 16)
     }
@@ -410,7 +410,7 @@ struct MediaDetailView: View {
                     detailRow("标签", current.tags.joined(separator: " / "))
                 }
             }
-            .background(FMTheme.surface, in: RoundedRectangle(cornerRadius: FMTheme.cornerRadius, style: .continuous))
+            .fmLiquidGlass(cornerRadius: FMTheme.cornerRadius)
         }
         .padding(.horizontal, 16)
     }

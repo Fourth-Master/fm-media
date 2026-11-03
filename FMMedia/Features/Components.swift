@@ -89,7 +89,7 @@ struct StatTile: View {
                 .font(.system(size: 20, weight: .bold, design: .rounded))
                 .foregroundStyle(tint)
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
+                .minimumScaleFactor(0.5)
             Text(label)
                 .font(.system(size: 11))
                 .foregroundStyle(FMTheme.textTertiary)
@@ -97,7 +97,7 @@ struct StatTile: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 12)
         .padding(.horizontal, 12)
-        .background(FMTheme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .fmLiquidGlass(cornerRadius: 12)
     }
 }
 
@@ -139,7 +139,7 @@ struct FMSearchField: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(FMTheme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .fmLiquidGlass(cornerRadius: 12)
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(FMTheme.separator, lineWidth: 1)
@@ -222,7 +222,7 @@ struct LoadingBanner: View {
             Spacer()
         }
         .padding(12)
-        .background(FMTheme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .fmLiquidGlass(cornerRadius: 12)
     }
 }
 
@@ -314,15 +314,13 @@ struct PosterCard: View {
             Text(resolved.title)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(FMTheme.textPrimary)
-                .lineLimit(settings.data.showFullTitle ? nil : 2)
-                .fixedSize(horizontal: false, vertical: settings.data.showFullTitle)
+                .lineLimit(1)
                 .multilineTextAlignment(.leading)
             if !resolved.subtitle.isEmpty {
                 Text(resolved.subtitle)
                     .font(.system(size: 10))
                     .foregroundStyle(FMTheme.textTertiary)
-                    .lineLimit(settings.data.showFullTitle ? nil : 1)
-                    .fixedSize(horizontal: false, vertical: settings.data.showFullTitle)
+                    .lineLimit(1)
                     .multilineTextAlignment(.leading)
             }
         }

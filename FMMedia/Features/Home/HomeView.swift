@@ -91,7 +91,7 @@ struct HomeView: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(FMTheme.textPrimary)
                     .frame(width: 38, height: 38)
-                    .background(FMTheme.surface, in: Circle())
+                    .fmLiquidGlassCircle()
             }
             .disabled(library.isScanning)
         }
@@ -240,7 +240,7 @@ struct HomeView: View {
                         }
                     }
                 }
-                .background(FMTheme.surface, in: RoundedRectangle(cornerRadius: FMTheme.cornerRadius, style: .continuous))
+                .fmLiquidGlass(cornerRadius: FMTheme.cornerRadius)
             }
         }
     }

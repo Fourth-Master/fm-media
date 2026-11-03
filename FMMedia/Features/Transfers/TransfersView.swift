@@ -88,7 +88,7 @@ struct TransfersView: View {
                     .foregroundStyle(FMTheme.textTertiary)
             }
             .padding(12)
-            .background(FMTheme.surface, in: RoundedRectangle(cornerRadius: FMTheme.cornerRadius, style: .continuous))
+            .fmLiquidGlass(cornerRadius: FMTheme.cornerRadius)
         }
         .buttonStyle(.plain)
         .padding(.top, 20)

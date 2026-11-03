@@ -133,7 +133,7 @@ struct AddSourceView: View {
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .padding(11)
-                .background(FMTheme.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .fmLiquidGlass(cornerRadius: 10)
         }
     }
 
@@ -276,7 +276,7 @@ struct AddSourceView: View {
             }
             .padding(.horizontal, 11)
             .padding(.vertical, 4)
-            .background(FMTheme.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .fmLiquidGlass(cornerRadius: 10)
         }
     }
 
@@ -295,7 +295,7 @@ struct AddSourceView: View {
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .padding(11)
-            .background(FMTheme.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .fmLiquidGlass(cornerRadius: 10)
         }
     }
 

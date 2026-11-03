@@ -607,7 +607,7 @@ struct NamingRulesView: View {
                 .foregroundStyle(FMTheme.textSecondary)
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(FMTheme.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .fmLiquidGlass(cornerRadius: 10)
 
                 Text("规则说明")
                     .font(.system(size: 14, weight: .bold))
