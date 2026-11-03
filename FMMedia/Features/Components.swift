@@ -314,7 +314,7 @@ struct PosterCard: View {
             Text(resolved.title)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(FMTheme.textPrimary)
-                .lineLimit(settings.data.showFullTitle ? nil : 1)
+                .lineLimit(settings.data.showFullTitle ? nil : 2)
                 .fixedSize(horizontal: false, vertical: settings.data.showFullTitle)
                 .multilineTextAlignment(.leading)
             if !resolved.subtitle.isEmpty {

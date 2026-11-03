@@ -43,6 +43,7 @@ final class LibraryStore: ObservableObject {
         guard !isScanning else { return }
         isScanning = true
         lastError = nil
+        let started = Date()
         // 后台 / 锁屏时保持扫描继续
         BackgroundKeepAlive.shared.begin()
         defer { BackgroundKeepAlive.shared.end() }
@@ -98,6 +99,7 @@ final class LibraryStore: ObservableObject {
 
             scanStatus = "正在扫描 \(source.name)（\(index + 1)/\(scannable.count)）"
             if source.kind == .local {
+                AppDebugLog.write("[Scan] 本机来源路径: \(source.localPath ?? "<空>") 书签=\(source.localBookmark != nil ? "有" : "无")")
                 let storedSignatures = folderSignatures
                 let summary = await Task.detached(priority: .userInitiated) {
                     LibraryScanner.scanLocal(source: source,
@@ -109,6 +111,7 @@ final class LibraryStore: ObservableObject {
                 for (path, signature) in summary.folderSignatures {
                     folderSignatures[path] = signature
                 }
+                AppDebugLog.write("[Scan] 本机结果: 影片=\(summary.items.count) 遍历文件夹=\(summary.scannedFolders) 跳过已入库=\(summary.knownSkipped) 无视频跳过=\(summary.skippedFolders.count)")
                 if !summary.skippedFolders.isEmpty {
                     Log.info("跳过 \(summary.skippedFolders.count) 个无视频文件夹")
                 }
@@ -141,6 +144,7 @@ final class LibraryStore: ObservableObject {
         }
 
         items = result.sorted { $0.addedAt > $1.addedAt }
+        AppDebugLog.write("[Scan] 完成: 总计 \(items.count) 部，用时 \(Int(Date().timeIntervalSince(started))) 秒")
         lastScan = Date()
         isScanning = false
         scanStatus = ""

@@ -104,11 +104,18 @@ enum LibraryScanner {
                           storedFolderSignatures: [String: String] = [:]) -> ScanSummary {
         let started = Date()
         var summary = ScanSummary()
-        guard let path = source.localPath, !path.isEmpty else { return summary }
+        guard let path = source.localPath, !path.isEmpty else {
+            AppDebugLog.write("[Scan] 本机来源无路径配置: \(source.name)")
+            return summary
+        }
         let root = URL(fileURLWithPath: path, isDirectory: true)
 
         ScopedAccess.withURL(root) { rootURL in
             let children = listing(rootURL)
+            AppDebugLog.write("[Scan] 根目录条目数=\(children.count): \(rootURL.path)")
+            if children.isEmpty {
+                AppDebugLog.write("[Scan] 警告: 根目录读取为空（授权失效或路径不存在）")
+            }
             var directories: [URL] = []
             var files: [URL] = []
 
