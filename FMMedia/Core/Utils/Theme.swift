@@ -369,22 +369,33 @@ extension View {
 
 // MARK: - 液态玻璃
 
-/// 通用卡片背景：液态玻璃（材质 + 高光描边）
+/// 统一玻璃面：半透明材质（让动态背景透出）+ 高光描边
+private struct FMGlassFill<S: Shape>: View {
+    var shape: S
+
+    var body: some View {
+        shape
+            .fill(.ultraThinMaterial)
+            .opacity(0.68)
+            .overlay(
+                shape.stroke(
+                    LinearGradient(colors: [.white.opacity(0.30), .white.opacity(0.08)],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing),
+                    lineWidth: 1
+                )
+            )
+    }
+}
+
+/// 通用卡片背景：液态玻璃
 struct FMCardBackground: ViewModifier {
     var padding: CGFloat = 14
 
     func body(content: Content) -> some View {
         content
             .padding(padding)
-            .background(.ultraThinMaterial,
-                        in: RoundedRectangle(cornerRadius: FMTheme.cornerRadius, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: FMTheme.cornerRadius, style: .continuous)
-                    .stroke(
-                        LinearGradient(colors: [.white.opacity(0.28), .white.opacity(0.06)],
-                                       startPoint: .topLeading, endPoint: .bottomTrailing),
-                        lineWidth: 1
-                    )
+            .background(
+                FMGlassFill(shape: RoundedRectangle(cornerRadius: FMTheme.cornerRadius, style: .continuous))
             )
             .shadow(color: .black.opacity(0.10), radius: 10, y: 4)
     }
@@ -397,31 +408,19 @@ extension View {
 
     /// 液态玻璃胶囊/面板（用于控件容器）
     func fmLiquidGlass(cornerRadius: CGFloat = 12) -> some View {
-        self
-            .background(.ultraThinMaterial,
-                        in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(
-                        LinearGradient(colors: [.white.opacity(0.28), .white.opacity(0.06)],
-                                       startPoint: .topLeading, endPoint: .bottomTrailing),
-                        lineWidth: 1
-                    )
-            )
+        background(
+            FMGlassFill(shape: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        )
     }
 
     /// 液态玻璃胶囊（chips 等）
     func fmLiquidGlassCapsule() -> some View {
-        self
-            .background(.ultraThinMaterial, in: Capsule())
-            .overlay(Capsule().stroke(.white.opacity(0.20), lineWidth: 1))
+        background(FMGlassFill(shape: Capsule()))
     }
 
     /// 液态玻璃圆形（圆钮）
     func fmLiquidGlassCircle() -> some View {
-        self
-            .background(.ultraThinMaterial, in: Circle())
-            .overlay(Circle().stroke(.white.opacity(0.22), lineWidth: 1))
+        background(FMGlassFill(shape: Circle()))
     }
 
     func fmPrimaryButton() -> some View {
@@ -469,15 +468,7 @@ struct FMTag: View {
 struct FMGlassListRow: ViewModifier {
     func body(content: Content) -> some View {
         content.listRowBackground(
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .overlay(
-                    Rectangle().stroke(
-                        LinearGradient(colors: [.white.opacity(0.28), .white.opacity(0.06)],
-                                       startPoint: .topLeading, endPoint: .bottomTrailing),
-                        lineWidth: 1
-                    )
-                )
+            FMGlassFill(shape: Rectangle())
         )
     }
 }
