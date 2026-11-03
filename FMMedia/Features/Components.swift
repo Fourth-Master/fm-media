@@ -90,6 +90,7 @@ struct StatTile: View {
                 .foregroundStyle(tint)
                 .lineLimit(1)
                 .minimumScaleFactor(0.5)
+                .frame(height: 24, alignment: .leading)
             Text(label)
                 .font(.system(size: 11))
                 .foregroundStyle(FMTheme.textTertiary)

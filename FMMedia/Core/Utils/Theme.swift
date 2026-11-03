@@ -92,7 +92,7 @@ struct GalaxyBackground: View {
             let s = Double(index) + saltBase
             let star = Star(x: CGFloat(rand(s, 12.9)),
                             y: CGFloat(rand(s, 78.2)),
-                            radius: CGFloat(0.5 + rand(s, 9.1) * 1.2),
+                            radius: CGFloat(0.4 + rand(s, 9.1) * 0.8),
                             twinkleSpeed: 0.5 + rand(s, 3.7) * 1.2,
                             twinklePhase: s * 2.3,
                             brightness: 0.30 + rand(s, 5.3) * 0.45)
@@ -112,7 +112,7 @@ struct GalaxyBackground: View {
             let pos = bandPoint(t: t)
             let star = Star(x: min(max(pos.x + offset * 0.25, 0), 1),
                             y: min(max(pos.y + offset, 0), 1),
-                            radius: CGFloat(0.4 + rand(s, 13.7) * 0.9),
+                            radius: CGFloat(0.3 + rand(s, 13.7) * 0.6),
                             twinkleSpeed: 0.4 + rand(s, 6.1) * 1.0,
                             twinklePhase: s * 1.7,
                             brightness: 0.25 + rand(s, 8.9) * 0.45)
@@ -133,15 +133,12 @@ struct GalaxyBackground: View {
                 let t = timeline.date.timeIntervalSinceReferenceDate
                 Self.drawBand(context: &context, size: size)
                 Self.drawNebulae(context: &context, size: size, t: t)
-                // 亮带星点整体柔化（光雾感，不呈硬圆点）
-                context.drawLayer { softLayer in
-                    softLayer.addFilter(.blur(radius: 1.4))
-                    Self.drawStars(context: &softLayer, size: size, t: t,
-                                   stars: Self.bandStars, scale: 0.9)
-                }
+                Self.drawStars(context: &context, size: size, t: t,
+                               stars: Self.bandStars, scale: 0.55)
                 Self.drawStars(context: &context, size: size, t: t,
                                stars: Self.fieldStars, scale: 1.0)
                 Self.drawBrightStars(context: &context, size: size, t: t)
+                Self.drawMeteors(context: &context, size: size, t: t)
             }
             .background(Color(hex: 0x07080A))
         }
@@ -189,18 +186,64 @@ struct GalaxyBackground: View {
         for star in brightStars {
             let twinkle = 0.7 + 0.3 * sin(t * star.twinkleSpeed + star.twinklePhase)
             let center = CGPoint(x: star.x * size.width, y: star.y * size.height)
-            // 光晕收敛：小而淡，避免呈现为大圆点
-            let haloRadius = star.radius * 3.5
+            // 光晕极淡，只保留一点辉光，避免大圆点
+            let haloRadius = star.radius * 2.2
             let halo = CGRect(x: center.x - haloRadius, y: center.y - haloRadius,
                               width: haloRadius * 2, height: haloRadius * 2)
             context.fill(Path(ellipseIn: halo),
-                         with: .radialGradient(Gradient(colors: [.white.opacity(0.16 * twinkle), .clear]),
+                         with: .radialGradient(Gradient(colors: [.white.opacity(0.10 * twinkle), .clear]),
                                                center: center, startRadius: 0, endRadius: haloRadius))
-            let coreRadius = star.radius * 1.1
+            let coreRadius = star.radius * 0.9
             let core = CGRect(x: center.x - coreRadius, y: center.y - coreRadius,
                               width: coreRadius * 2, height: coreRadius * 2)
             context.fill(Path(ellipseIn: core),
-                         with: .color(.white.opacity(0.85 * twinkle)))
+                         with: .color(.white.opacity(0.9 * twinkle)))
+        }
+    }
+
+    /// 流星：按时间窗口确定性生成，约每 7 秒 / 13 秒各一颗（错开），随机起点与方向
+    private static func drawMeteors(context: inout GraphicsContext, size: CGSize, t: Double) {
+        let specs: [(interval: Double, phase: Double)] = [(7.0, 0.0), (13.0, 3.5)]
+        for spec in specs {
+            let elapsed = t - spec.phase
+            guard elapsed > 0 else { continue }
+            let window = floor(elapsed / spec.interval)
+            let local = elapsed - window * spec.interval
+            let duration = 1.1
+            guard local < duration else { continue }
+
+            let seed = window * 17.3 + spec.phase * 7.7
+            let startX = 0.15 + rand(seed, 51.7) * 0.7          // 0.15~0.85
+            let startY = rand(seed, 83.1) * 0.35                // 上半区
+            let dirRight = rand(seed, 29.3) > 0.5
+            let angle = (18.0 + rand(seed, 61.9) * 24.0) * .pi / 180.0   // 向下 18°~42°
+            let dx = dirRight ? cos(angle) : -cos(angle)
+            let dy = sin(angle)
+            let travel = size.width * 0.32 * (local / duration)
+
+            let headX = (startX * size.width) + CGFloat(dx * travel)
+            let headY = (startY * size.height) + CGFloat(dy * travel)
+            let tailLength = size.width * 0.09
+            let tailX = headX - CGFloat(dx) * tailLength
+            let tailY = headY - CGFloat(dy) * tailLength
+            let fade = sin((local / duration) * .pi)             // 淡入淡出
+
+            var line = Path()
+            line.move(to: CGPoint(x: tailX, y: tailY))
+            line.addLine(to: CGPoint(x: headX, y: headY))
+            let gradient = Gradient(colors: [.clear, .white.opacity(0.85)])
+            let style = StrokeStyle(lineWidth: 1.5, lineCap: .round)
+            context.drawLayer { layer in
+                layer.opacity = fade
+                layer.stroke(line, with: .linearGradient(gradient,
+                                                         startPoint: CGPoint(x: tailX, y: tailY),
+                                                         endPoint: CGPoint(x: headX, y: headY)),
+                             style: style)
+            }
+            let headRadius = CGFloat(1.4)
+            context.fill(Path(ellipseIn: CGRect(x: headX - headRadius, y: headY - headRadius,
+                                                width: headRadius * 2, height: headRadius * 2)),
+                         with: .color(.white.opacity(0.95 * fade)))
         }
     }
 
@@ -359,13 +402,8 @@ extension View {
                         in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(LinearGradient(colors: [.white.opacity(0.10), .white.opacity(0.03), .clear],
-                                         startPoint: .topLeading, endPoint: .bottomTrailing))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .stroke(
-                        LinearGradient(colors: [.white.opacity(0.32), .white.opacity(0.08)],
+                        LinearGradient(colors: [.white.opacity(0.28), .white.opacity(0.06)],
                                        startPoint: .topLeading, endPoint: .bottomTrailing),
                         lineWidth: 1
                     )
@@ -427,14 +465,19 @@ struct FMTag: View {
 
 // MARK: - List 行玻璃
 
-/// List 行液态玻璃背景（配合 fmScrollContentBackgroundHidden 使用）
+/// List 行液态玻璃背景（配合 fmScrollContentBackgroundHidden 使用，与 fmLiquidGlass 同款）
 struct FMGlassListRow: ViewModifier {
     func body(content: Content) -> some View {
         content.listRowBackground(
             Rectangle()
                 .fill(.ultraThinMaterial)
-                .overlay(Rectangle().fill(Color.white.opacity(0.02)))
-                .opacity(0.72)
+                .overlay(
+                    Rectangle().stroke(
+                        LinearGradient(colors: [.white.opacity(0.28), .white.opacity(0.06)],
+                                       startPoint: .topLeading, endPoint: .bottomTrailing),
+                        lineWidth: 1
+                    )
+                )
         )
     }
 }

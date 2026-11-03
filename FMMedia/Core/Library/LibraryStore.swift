@@ -210,25 +210,31 @@ final class LibraryStore: ObservableObject {
 
     // MARK: - 扫描控制
 
-    /// 暂停扫描（远程扫描会在目录间等待恢复）
+    /// 暂停扫描（目录间等待恢复）
     func pauseScan() {
+        LibraryScanner.isPaused = true
         RemoteLibraryScanner.isPaused = true
         scanStatus = "扫描已暂停"
     }
 
     /// 恢复扫描
     func resumeScan() {
+        LibraryScanner.isPaused = false
         RemoteLibraryScanner.isPaused = false
     }
 
     /// 停止扫描（当前来源中断，已扫描到的条目保留）
     func stopScan() {
+        LibraryScanner.isCancelled = true
+        LibraryScanner.isPaused = false
         RemoteLibraryScanner.isCancelled = true
         RemoteLibraryScanner.isPaused = false
         scanStatus = "扫描已停止"
     }
 
-    var isScanPaused: Bool { RemoteLibraryScanner.isPaused }
+    var isScanPaused: Bool {
+        LibraryScanner.isPaused || RemoteLibraryScanner.isPaused
+    }
 
     func removeItems(withIDs ids: Set<String>) {
         items.removeAll { ids.contains($0.id) }

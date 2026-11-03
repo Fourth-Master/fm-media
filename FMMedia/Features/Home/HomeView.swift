@@ -29,7 +29,35 @@ struct HomeView: View {
                     header
                     statRow
                     if library.isScanning {
-                        LoadingBanner(text: library.scanStatus.isEmpty ? "正在扫描媒体库…" : library.scanStatus)
+                        HStack(spacing: 10) {
+                            LoadingBanner(text: library.scanStatus.isEmpty ? "正在扫描媒体库…" : library.scanStatus)
+                            // 暂停/继续
+                            Button {
+                                if library.isScanPaused {
+                                    library.resumeScan()
+                                } else {
+                                    library.pauseScan()
+                                }
+                            } label: {
+                                Image(systemName: library.isScanPaused ? "play.fill" : "pause.fill")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(FMTheme.textSecondary)
+                                    .frame(width: 36, height: 36)
+                                    .fmLiquidGlassCircle()
+                            }
+                            .buttonStyle(.plain)
+                            // 停止
+                            Button {
+                                library.stopScan()
+                            } label: {
+                                Image(systemName: "stop.fill")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(FMTheme.danger)
+                                    .frame(width: 36, height: 36)
+                                    .fmLiquidGlassCircle()
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                     if !continueItems.isEmpty { continueSection }
                     if !recentItems.isEmpty { recentSection }

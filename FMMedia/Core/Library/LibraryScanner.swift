@@ -39,6 +39,10 @@ enum ScanFingerprint {
 ///   extrafanart/           ← 预览截图，文件名从 0 开始（0.jpg、1.jpg …）
 /// ```
 enum LibraryScanner {
+    /// 扫描控制（跨任务读写），与 RemoteLibraryScanner 一并由 LibraryStore 控制
+    nonisolated(unsafe) static var isPaused = false
+    nonisolated(unsafe) static var isCancelled = false
+
     private struct FileMeta {
         var isDirectory: Bool = false
         var size: Int64 = 0
@@ -104,6 +108,8 @@ enum LibraryScanner {
                           storedFolderSignatures: [String: String] = [:]) -> ScanSummary {
         let started = Date()
         var summary = ScanSummary()
+        isPaused = false
+        isCancelled = false
         guard let path = source.localPath, !path.isEmpty else {
             AppDebugLog.write("[Scan] 本机来源无路径配置: \(source.name)")
             return summary
@@ -131,6 +137,12 @@ enum LibraryScanner {
             }
 
             for dir in directories {
+                // 暂停/停止响应
+                while isPaused && !isCancelled {
+                    Thread.sleep(forTimeInterval: 0.2)
+                }
+                if isCancelled { break }
+
                 let signature = folderSignature(dir)
                 summary.folderSignatures[dir.path] = signature
                 let isKnown = knownFolderPaths?.contains(dir.path) ?? false
