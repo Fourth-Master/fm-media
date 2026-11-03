@@ -144,6 +144,7 @@ enum LibraryScanner {
                     summary.items.append(item)
                 } else {
                     summary.skippedFolders.append(dir.lastPathComponent)
+                    AppDebugLog.write("[Scan] 跳过文件夹「\(dir.lastPathComponent)」路径长度=\(dir.path.utf8.count)B：无视频或读取失败")
                 }
             }
 
@@ -436,12 +437,29 @@ enum LibraryScanner {
 
     private static func listing(_ url: URL) -> [URL] {
         let fm = FileManager.default
-        guard let items = try? fm.contentsOfDirectory(at: url,
-                                                      includingPropertiesForKeys: resourceKeys,
-                                                      options: [.skipsHiddenFiles]) else {
+        do {
+            let items = try fm.contentsOfDirectory(at: url,
+                                                   includingPropertiesForKeys: resourceKeys,
+                                                   options: [.skipsHiddenFiles])
+            return items
+        } catch {
+            AppDebugLog.write("[Scan] 列目录失败「\(url.lastPathComponent)」路径长度=\(url.path.utf8.count)B: \(error.localizedDescription)")
+            // 路径过长时用相对路径重试（changeCurrentDirectory 规避绝对路径上限）
+            if url.path.utf8.count > 900 {
+                return listingViaRelativePath(url)
+            }
             return []
         }
-        return items
+    }
+
+    /// 绝对路径过长时的兜底：切到父目录用相对路径列举，返回补全后的绝对 URL
+    private static func listingViaRelativePath(_ url: URL) -> [URL] {
+        let fm = FileManager.default
+        let original = fm.currentDirectoryPath
+        guard fm.changeCurrentDirectoryPath(url.deletingLastPathComponent().path) else { return [] }
+        defer { fm.changeCurrentDirectoryPath(original) }
+        guard let items = try? fm.contentsOfDirectory(atPath: url.lastPathComponent) else { return [] }
+        return items.map { url.appendingPathComponent($0) }
     }
 
     private static func meta(of url: URL) -> FileMeta {
