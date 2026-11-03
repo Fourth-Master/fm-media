@@ -63,7 +63,8 @@ struct SettingsData: Codable, Equatable {
     var preferredSubtitleLanguage: String = "zh"
     var librarySort: LibrarySort = .recent
     var libraryFilter: LibraryFilter = .all
-    var showUnrecognizedItems: Bool = false
+    /// 未识别条目默认显示（中文/日文命名的目录无法解析出标准番号，隐藏会让媒体库看起来为空）
+    var showUnrecognizedItems: Bool = true
     var showCrackedBadge: Bool = true
     /// 是否启用数据源 genre 作为题材分类
     var enableGenreCategories: Bool = true

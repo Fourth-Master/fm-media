@@ -104,6 +104,7 @@ struct LibraryView: View {
                                         ? "到「文件 → 添加来源」导入按番号命名的本机目录，或添加媒体服务器后导入媒体库。"
                                         : "试试切换筛选条件或清空搜索关键词。")
                             .padding(.top, 40)
+                        hiddenUnrecognizedHint
                     }
                 } else {
                     ScrollView {
@@ -204,6 +205,35 @@ struct LibraryView: View {
         }
         .pickerStyle(.segmented)
         .font(.system(size: 12))
+    }
+
+    // MARK: - 隐藏的未识别条目提示
+
+    /// 库里有未识别条目但被开关隐藏时（媒体库显示为空），给出一键显示入口
+    @ViewBuilder
+    private var hiddenUnrecognizedHint: some View {
+        let hiddenCount = library.items.filter { !$0.isRecognized }.count
+        if !library.items.isEmpty, hiddenCount > 0, !settings.data.showUnrecognizedItems {
+            VStack(spacing: 10) {
+                Text("有 \(hiddenCount) 个条目因无法解析出标准番号被标记为「未识别」，当前已隐藏。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(FMTheme.textSecondary)
+                    .multilineTextAlignment(.center)
+                Button {
+                    settings.data.showUnrecognizedItems = true
+                } label: {
+                    Label("显示未识别条目", systemImage: "eye")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 9)
+                        .background(FMTheme.accent, in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 30)
+            .padding(.top, 16)
+        }
     }
 
     private var filterRow: some View {
