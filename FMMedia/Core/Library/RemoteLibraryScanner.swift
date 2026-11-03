@@ -3,6 +3,10 @@ import Foundation
 /// 扫描远程来源（WebDAV / SMB），命名规则与本机目录一致：
 /// 番号文件夹 / 同名视频与字幕 / poster / fanart / nfo / extrafanart
 enum RemoteLibraryScanner {
+    /// 扫描控制（跨任务读写）
+    nonisolated(unsafe) static var isPaused = false
+    nonisolated(unsafe) static var isCancelled = false
+
     private final class State {
         var dirs = 0
         var videos = 0
@@ -31,6 +35,8 @@ enum RemoteLibraryScanner {
     static func scan(source: MediaSourceConfig,
                      knownFolderPaths: Set<String>? = nil,
                      progress: @escaping (String) -> Void) async -> [MediaItem] {
+        isPaused = false
+        isCancelled = false
         guard let provider = try? await ProviderFactory.make(source) else {
             Log.error("远程扫描失败：无法创建来源 \(source.name)")
             return []
@@ -47,6 +53,10 @@ enum RemoteLibraryScanner {
         }
 
         func walk(_ path: String, depth: Int) async {
+            if isCancelled { return }
+            while isPaused && !isCancelled {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+            }
             if let known = knownFolderPaths, known.contains(path) { return }
             guard depth <= 4, state.dirs < state.maxDirs, state.videos < state.maxVideos else { return }
             state.dirs += 1
@@ -99,6 +109,9 @@ enum RemoteLibraryScanner {
         let rootEntries = (try? await provider.list(path: root)) ?? []
         if rootEntries.isEmpty && root != "/" {
             Log.error("远程扫描：起始目录为空或不可访问 \(root)")
+            AppDebugLog.write("[Scan] 远程起始目录为空或不可访问: \(root) —— 请检查地址/账号/起始目录设置")
+        } else {
+            AppDebugLog.write("[Scan] 远程根目录条目数=\(rootEntries.count): \(root)")
         }
 
         // 1) 根目录散落文件按番号聚合
@@ -114,11 +127,16 @@ enum RemoteLibraryScanner {
         // 2) 番号文件夹逐层扫描
         let rootDirs = rootEntries.filter { $0.isDirectory && $0.name.lowercased() != "extrafanart" }
         for dir in rootDirs {
+            if isCancelled { break }
+            while isPaused && !isCancelled {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+            }
             await walk(dir.path, depth: 2)
         }
 
         items.sort { $0.addedAt > $1.addedAt }
         Log.info("远程扫描完成 \(source.name)：\(items.count) 部影片，遍历 \(state.dirs) 个目录")
+        AppDebugLog.write("[Scan] 远程完成: 影片=\(items.count) 遍历目录=\(state.dirs) 起始=\(root)")
         return items
     }
 

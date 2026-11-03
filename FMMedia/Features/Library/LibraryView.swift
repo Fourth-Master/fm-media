@@ -65,8 +65,35 @@ struct LibraryView: View {
                 }
 
                 if library.isScanning {
-                    LoadingBanner(text: library.scanStatus.isEmpty ? "正在扫描…" : library.scanStatus)
-                        .padding(.horizontal, 16)
+                    HStack(spacing: 10) {
+                        LoadingBanner(text: library.scanStatus.isEmpty ? "正在扫描…" : library.scanStatus)
+                        // 暂停/继续 + 停止
+                        Button {
+                            if library.isScanPaused {
+                                library.resumeScan()
+                            } else {
+                                library.pauseScan()
+                            }
+                        } label: {
+                            Image(systemName: library.isScanPaused ? "play.fill" : "pause.fill")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(FMTheme.textSecondary)
+                                .frame(width: 34, height: 34)
+                                .fmLiquidGlass(cornerRadius: 10)
+                        }
+                        .buttonStyle(.plain)
+                        Button {
+                            library.stopScan()
+                        } label: {
+                            Image(systemName: "stop.fill")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(FMTheme.danger)
+                                .frame(width: 34, height: 34)
+                                .fmLiquidGlass(cornerRadius: 10)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 16)
                 }
 
                 if items.isEmpty {

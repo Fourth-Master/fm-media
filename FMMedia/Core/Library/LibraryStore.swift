@@ -119,6 +119,7 @@ final class LibraryStore: ObservableObject {
                     Log.info("跳过 \(summary.knownSkipped) 个已入库文件夹")
                 }
             } else {
+                AppDebugLog.write("[Scan] 远程来源: \(source.name) kind=\(source.kind.rawValue) 地址=\(source.baseURL) 起始=\(source.extra["path"] ?? "<未设置>")")
                 let scanned = await Task.detached(priority: .userInitiated) { [weak self] in
                     await RemoteLibraryScanner.scan(source: source,
                                                     knownFolderPaths: knownFolderPaths,
@@ -127,6 +128,7 @@ final class LibraryStore: ObservableObject {
                     })
                 }.value
                 for item in scanned { merged[item.id] = item }
+                AppDebugLog.write("[Scan] 远程结果: 影片=\(scanned.count)")
             }
 
             // 记录签名（拿不到签名时退化为“已扫描”标记，下次仍会尝试比对）
@@ -205,6 +207,28 @@ final class LibraryStore: ObservableObject {
         JSONStore.save(scanSignatures, to: "scanSignatures.json")
         JSONStore.save(folderSignatures, to: "folderSignatures.json")
     }
+
+    // MARK: - 扫描控制
+
+    /// 暂停扫描（远程扫描会在目录间等待恢复）
+    func pauseScan() {
+        RemoteLibraryScanner.isPaused = true
+        scanStatus = "扫描已暂停"
+    }
+
+    /// 恢复扫描
+    func resumeScan() {
+        RemoteLibraryScanner.isPaused = false
+    }
+
+    /// 停止扫描（当前来源中断，已扫描到的条目保留）
+    func stopScan() {
+        RemoteLibraryScanner.isCancelled = true
+        RemoteLibraryScanner.isPaused = false
+        scanStatus = "扫描已停止"
+    }
+
+    var isScanPaused: Bool { RemoteLibraryScanner.isPaused }
 
     func removeItems(withIDs ids: Set<String>) {
         items.removeAll { ids.contains($0.id) }
