@@ -28,7 +28,15 @@ final class RemoteImageLoader: @unchecked Sendable {
             let key = ref.cacheKey
             let image = await withCheckedContinuation { (continuation: CheckedContinuation<UIImage?, Never>) in
                 ioQueue.async {
-                    let loaded = UIImage(contentsOfFile: ref.url.path)
+                    var loaded = UIImage(contentsOfFile: ref.url.path)
+                    // 安全作用域书签可能失效（应用挂起后）：首读失败时重激活来源再试一次
+                    if loaded == nil {
+                        Task { @MainActor in
+                            LocalAccessManager.shared.ensureAccessByURL(ref.url)
+                        }
+                        Thread.sleep(forTimeInterval: 0.05)
+                        loaded = UIImage(contentsOfFile: ref.url.path)
+                    }
                     if let loaded { self.memory.setObject(loaded, forKey: key as NSString) }
                     continuation.resume(returning: loaded)
                 }

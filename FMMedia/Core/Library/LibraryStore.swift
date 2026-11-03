@@ -64,6 +64,11 @@ final class LibraryStore: ObservableObject {
             let key = source.id.uuidString
             scanStatus = "检查 \(source.name)（\(index + 1)/\(scannable.count)）"
 
+            // 本机来源：扫描前确保书签授权可用（应用挂起后可能失效）
+            if source.kind == .local {
+                LocalAccessManager.shared.ensureAccess(source)
+            }
+
             // 先取根目录一级签名：目录无变化时整个来源直接跳过（不做深层遍历）
             let signature: String?
             if source.kind == .local {

@@ -455,22 +455,58 @@ final class LocalAccessManager {
 
     private init() {}
 
+    /// 解析来源的可访问 URL（书签优先），失败返回 nil
+    func resolvedURL(for source: MediaSourceConfig) -> URL? {
+        if let bookmark = source.localBookmark {
+            if let resolved = BookmarkStore.resolve(bookmark) {
+                if resolved.isStale {
+                    Log.info("书签已过期: \(resolved.url.lastPathComponent)")
+                }
+                return resolved.url
+            }
+            Log.info("书签解析失败: \(source.name)")
+        }
+        if let path = source.localPath, !path.isEmpty {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+        return nil
+    }
+
     func activate(_ source: MediaSourceConfig) {
         guard source.kind == .local else { return }
         if activeURLs[source.id] != nil { return }
-        let url: URL?
-        if let bookmark = source.localBookmark, let resolved = BookmarkStore.resolve(bookmark) {
-            url = resolved.url
-        } else if let path = source.localPath {
-            url = URL(fileURLWithPath: path)
-        } else {
-            url = nil
-        }
-        guard let url else { return }
-        _ = url.startAccessingSecurityScopedResource()
+        guard let url = resolvedURL(for: source) else { return }
+        let started = url.startAccessingSecurityScopedResource()
         activeURLs[source.id] = url
-        Log.info("本机目录已授权: \(url.lastPathComponent)")
+        Log.info("本机目录已授权(\(started ? "ok" : "无需授权")): \(url.lastPathComponent)")
     }
+
+    /// 按需重新激活（书签可能因应用挂起失效），用于扫描与图片加载前
+    func ensureAccess(_ source: MediaSourceConfig) {
+        guard source.kind == .local else { return }
+        if activeURLs[source.id] != nil { return }
+        activate(source)
+        // 长期持有的授权可能已失效：重新激活一次确保可读
+        if let url = activeURLs[source.id] {
+            url.stopAccessingSecurityScopedResource()
+            _ = url.startAccessingSecurityScopedResource()
+        }
+    }
+
+    /// 根据文件路径找到所属来源并确保授权（图片加载兜底用）
+    func ensureAccessByURL(_ fileURL: URL) {
+        let path = fileURL.path
+        for (_, url) in activeURLs where path.hasPrefix(url.path) {
+            return // 已有活跃来源覆盖该路径
+        }
+        // 未覆盖：重新激活所有本机来源（数量少，代价可忽略）
+        for source in LocalAccessManager.sourcesProvider?() ?? [] {
+            ensureAccess(source)
+        }
+    }
+
+    /// 由 App 层注入本机来源列表（避免反向依赖 AppDatabase）
+    nonisolated(unsafe) static var sourcesProvider: (() -> [MediaSourceConfig])?
 
     func deactivate(_ sourceID: UUID) {
         if let url = activeURLs.removeValue(forKey: sourceID) {

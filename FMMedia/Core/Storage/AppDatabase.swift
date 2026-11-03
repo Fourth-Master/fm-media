@@ -14,6 +14,10 @@ final class AppDatabase: ObservableObject {
         let loaded: [MediaSourceConfig] = JSONStore.load([MediaSourceConfig].self, from: fileName) ?? []
         sources = loaded
         LocalAccessManager.shared.activateAll(loaded)
+        LocalAccessManager.sourcesProvider = { [weak self] in
+            guard let self else { return [] }
+            return self.sources
+        }
     }
 
     func source(id: UUID?) -> MediaSourceConfig? {
