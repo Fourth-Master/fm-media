@@ -13,23 +13,18 @@ struct FMSwipeRow<Actions: View, Content: View>: View {
     @GestureState private var dragOffset: CGFloat = 0
 
     var body: some View {
-        // 外层裁剪：content 平移不会滑出容器，actions 始终被压在内容下方
-        RoundedRectangle(cornerRadius: FMTheme.cornerRadius, style: .continuous)
-            .fill(Color.clear)
-            .overlay(alignment: .trailing) {
-                actions()
-                    .frame(width: actionsWidth)
-                    .padding(.trailing, 6)
-                    .opacity(isOpen ? 1 : 0)
-            }
-            .overlay(alignment: .leading) {
-                content()
-                    .fmLiquidGlass(cornerRadius: FMTheme.cornerRadius)
-                    .offset(x: currentOffset)
-                    .gesture(swipeGesture)
-                    .animation(.spring(response: 0.28, dampingFraction: 0.82), value: currentOffset)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: FMTheme.cornerRadius, style: .continuous))
+        // ZStack 以 content 的尺寸为准（actions 在底层，滑开后露出）
+        ZStack(alignment: .trailing) {
+            actions()
+                .frame(width: actionsWidth)
+                .padding(.trailing, 6)
+                .opacity(isOpen ? 1 : 0)
+            content()
+                .fmLiquidGlass(cornerRadius: FMTheme.cornerRadius)
+                .offset(x: currentOffset)
+                .gesture(swipeGesture)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: FMTheme.cornerRadius, style: .continuous))
     }
 
     private var currentOffset: CGFloat {

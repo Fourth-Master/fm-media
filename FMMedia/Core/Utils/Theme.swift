@@ -294,12 +294,18 @@ struct CloudsBackground: View {
     }
 
     private static let clouds: [CloudSpec] = [
-        CloudSpec(baseX: 0.15, baseY: 0.22, widthFactor: 0.30, heightFactor: 0.05, speed: 9),
-        CloudSpec(baseX: 0.55, baseY: 0.14, widthFactor: 0.36, heightFactor: 0.04, speed: 13),
-        CloudSpec(baseX: 0.85, baseY: 0.38, widthFactor: 0.28, heightFactor: 0.06, speed: 7),
-        CloudSpec(baseX: 0.30, baseY: 0.58, widthFactor: 0.42, heightFactor: 0.045, speed: 11),
-        CloudSpec(baseX: 0.70, baseY: 0.78, widthFactor: 0.34, heightFactor: 0.055, speed: 15),
-        CloudSpec(baseX: 0.10, baseY: 0.88, widthFactor: 0.30, heightFactor: 0.05, speed: 10)
+        CloudSpec(baseX: 0.15, baseY: 0.10, widthFactor: 0.30, heightFactor: 0.05, speed: 9),
+        CloudSpec(baseX: 0.55, baseY: 0.16, widthFactor: 0.36, heightFactor: 0.04, speed: 13),
+        CloudSpec(baseX: 0.85, baseY: 0.26, widthFactor: 0.28, heightFactor: 0.06, speed: 7),
+        CloudSpec(baseX: 0.30, baseY: 0.36, widthFactor: 0.42, heightFactor: 0.045, speed: 11),
+        CloudSpec(baseX: 0.70, baseY: 0.46, widthFactor: 0.34, heightFactor: 0.055, speed: 15),
+        CloudSpec(baseX: 0.10, baseY: 0.55, widthFactor: 0.30, heightFactor: 0.05, speed: 10),
+        CloudSpec(baseX: 0.48, baseY: 0.64, widthFactor: 0.40, heightFactor: 0.05, speed: 8),
+        CloudSpec(baseX: 0.88, baseY: 0.70, widthFactor: 0.26, heightFactor: 0.045, speed: 12),
+        CloudSpec(baseX: 0.22, baseY: 0.76, widthFactor: 0.36, heightFactor: 0.05, speed: 14),
+        CloudSpec(baseX: 0.62, baseY: 0.84, widthFactor: 0.32, heightFactor: 0.055, speed: 9),
+        CloudSpec(baseX: 0.05, baseY: 0.90, widthFactor: 0.30, heightFactor: 0.05, speed: 11),
+        CloudSpec(baseX: 0.80, baseY: 0.94, widthFactor: 0.34, heightFactor: 0.045, speed: 8)
     ]
 
     /// 云朵鼓包（相对偏移 x/y 与半径比例）：

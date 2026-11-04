@@ -220,7 +220,7 @@ struct HomeView: View {
                 }
                 .buttonStyle(.plain)
             } else {
-                VStack(spacing: 0) {
+                VStack(spacing: 8) {
                     ForEach(database.sources) { source in
                         FMSwipeRow(actionsWidth: 76) {
                             Button {
@@ -262,9 +262,6 @@ struct HomeView: View {
                                 .padding(.horizontal, 12)
                             }
                             .buttonStyle(.plain)
-                        }
-                        if source.id != database.sources.last?.id {
-                            Divider().background(FMTheme.separator).padding(.leading, 60)
                         }
                     }
                 }
