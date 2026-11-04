@@ -132,7 +132,8 @@ struct FilesView: View {
             .padding(.vertical, 6)
         } content: {
             sourceRow(source)
-                .padding(.vertical, 4)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
         }
     }
 
