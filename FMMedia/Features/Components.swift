@@ -3,34 +3,38 @@ import SwiftUI
 // MARK: - 通用组件
 
 /// 支持左滑露出操作按钮的行容器（用于非 List 场景）
+/// 静止时只显示内容行；左滑后内容向左平移，行尾露出操作按钮
 struct FMSwipeRow<Actions: View, Content: View>: View {
     var actionsWidth: CGFloat = 72
     @ViewBuilder var actions: () -> Actions
     @ViewBuilder var content: () -> Content
 
-    @State private var offsetX: CGFloat = 0
+    @State private var isOpen = false
     @GestureState private var dragOffset: CGFloat = 0
 
-    private var currentOffset: CGFloat {
-        let base = -actionsWidth * (offsetX < -actionsWidth / 2 ? 1 : 0)
-        return min(0, max(-actionsWidth * 1.4, base + dragOffset))
-    }
-
     var body: some View {
-        ZStack(alignment: .trailing) {
-            HStack {
-                Spacer(minLength: 0)
+        // 外层裁剪：content 平移不会滑出容器，actions 始终被压在内容下方
+        RoundedRectangle(cornerRadius: FMTheme.cornerRadius, style: .continuous)
+            .fill(Color.clear)
+            .overlay(alignment: .trailing) {
                 actions()
                     .frame(width: actionsWidth)
-                    .padding(.trailing, 8)
+                    .padding(.trailing, 6)
+                    .opacity(isOpen ? 1 : 0)
             }
-            content()
-                .fmLiquidGlass(cornerRadius: FMTheme.cornerRadius)
-                .clipShape(RoundedRectangle(cornerRadius: FMTheme.cornerRadius, style: .continuous))
-                .offset(x: currentOffset)
-                .gesture(swipeGesture)
-                .animation(.spring(response: 0.28, dampingFraction: 0.82), value: currentOffset)
-        }
+            .overlay(alignment: .leading) {
+                content()
+                    .fmLiquidGlass(cornerRadius: FMTheme.cornerRadius)
+                    .offset(x: currentOffset)
+                    .gesture(swipeGesture)
+                    .animation(.spring(response: 0.28, dampingFraction: 0.82), value: currentOffset)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: FMTheme.cornerRadius, style: .continuous))
+    }
+
+    private var currentOffset: CGFloat {
+        let target: CGFloat = isOpen ? -actionsWidth : 0
+        return min(0, max(-actionsWidth, target + dragOffset))
     }
 
     private var swipeGesture: some Gesture {
@@ -42,10 +46,10 @@ struct FMSwipeRow<Actions: View, Content: View>: View {
             }
             .onEnded { value in
                 guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                let start = offsetX < -actionsWidth / 2 ? -actionsWidth : 0
-                let target = start + value.translation.width
+                let start: CGFloat = isOpen ? -actionsWidth : 0
+                let end = start + value.translation.width
                 withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-                    offsetX = target < -actionsWidth / 2 ? -actionsWidth : 0
+                    isOpen = end < -actionsWidth / 2
                 }
             }
     }
