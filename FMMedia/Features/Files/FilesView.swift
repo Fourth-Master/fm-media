@@ -42,6 +42,7 @@ struct FilesView: View {
                     Section("导入的目录") {
                         ForEach(localSources) { source in
                             editableSourceRow(source)
+                                .fmSwipeListRow()
                         }
                     }
                 }
@@ -50,6 +51,7 @@ struct FilesView: View {
                     Section("媒体服务器") {
                         ForEach(serverSources) { source in
                             editableSourceRow(source)
+                                .fmSwipeListRow()
                         }
                     }
                 }
@@ -58,6 +60,7 @@ struct FilesView: View {
                     Section("云盘") {
                         ForEach(cloudSources) { source in
                             editableSourceRow(source)
+                                .fmSwipeListRow()
                         }
                     }
                 }
@@ -66,6 +69,7 @@ struct FilesView: View {
                     Section("网络协议") {
                         ForEach(protocolSources) { source in
                             editableSourceRow(source)
+                                .fmSwipeListRow()
                         }
                     }
                 }
@@ -109,15 +113,26 @@ struct FilesView: View {
     }
 
     private func editableSourceRow(_ source: MediaSourceConfig) -> some View {
-        sourceRow(source)
-            .swipeActions(edge: .trailing) {
-                Button {
-                    editingSource = source
-                } label: {
-                    Label("编辑", systemImage: "pencil")
+        // List 行内嵌 FMSwipeRow：玻璃跟随内容滑动，左滑露出编辑按钮（与首页一致）
+        FMSwipeRow(actionsWidth: 76) {
+            Button {
+                editingSource = source
+            } label: {
+                VStack(spacing: 3) {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 15, weight: .semibold))
+                    Text("编辑")
+                        .font(.system(size: 10, weight: .medium))
                 }
-                .tint(FMTheme.accent)
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(FMTheme.accent, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
+            .buttonStyle(.plain)
+            .padding(.vertical, 6)
+        } content: {
+            sourceRow(source)
+        }
     }
 
     private func sourceRow(_ source: MediaSourceConfig) -> some View {

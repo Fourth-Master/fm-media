@@ -528,4 +528,11 @@ extension View {
     func fmGlassListRow() -> some View {
         modifier(FMGlassListRow())
     }
+
+    /// 行内自带玻璃（如 FMSwipeRow）时使用：清除系统行背景与分隔线即可
+    func fmSwipeListRow() -> some View {
+        listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+    }
 }
