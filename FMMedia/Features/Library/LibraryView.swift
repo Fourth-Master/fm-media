@@ -217,8 +217,7 @@ struct LibraryView: View {
                             .foregroundStyle(active ? .white : FMTheme.textSecondary)
                             .padding(.horizontal, 13)
                             .padding(.vertical, 7)
-                            .background(active ? FMTheme.accent : FMTheme.surface,
-                                        in: Capsule())
+                            .modifier(FMChipBackground(active: active))
                     }
                     .buttonStyle(.plain)
                 }
@@ -249,8 +248,7 @@ struct LibraryView: View {
                 .foregroundStyle(active ? .white : FMTheme.textSecondary)
                 .padding(.horizontal, 11)
                 .padding(.vertical, 6)
-                .background(active ? AnyShapeStyle(FMTheme.accent.opacity(0.85)) : AnyShapeStyle(.ultraThinMaterial), in: Capsule())
-            .overlay(Capsule().stroke(.white.opacity(active ? 0 : 0.22), lineWidth: 1))
+                .modifier(FMChipBackground(active: active))
         }
         .buttonStyle(.plain)
     }

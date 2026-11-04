@@ -37,20 +37,38 @@ enum FMTheme {
 }
 
 extension Color {
+    /// 支持 6 位（RRGGBB）与 8 位（RRGGBBAA）hex
     init(hex: UInt32, alpha: Double = 1.0) {
-        let r = Double((hex >> 16) & 0xFF) / 255.0
-        let g = Double((hex >> 8) & 0xFF) / 255.0
-        let b = Double(hex & 0xFF) / 255.0
-        self.init(.sRGB, red: r, green: g, blue: b, opacity: alpha)
+        if hex > 0xFFFFFF {
+            let r = Double((hex >> 24) & 0xFF) / 255.0
+            let g = Double((hex >> 16) & 0xFF) / 255.0
+            let b = Double((hex >> 8) & 0xFF) / 255.0
+            let a = Double(hex & 0xFF) / 255.0
+            self.init(.sRGB, red: r, green: g, blue: b, opacity: a)
+        } else {
+            let r = Double((hex >> 16) & 0xFF) / 255.0
+            let g = Double((hex >> 8) & 0xFF) / 255.0
+            let b = Double(hex & 0xFF) / 255.0
+            self.init(.sRGB, red: r, green: g, blue: b, opacity: alpha)
+        }
     }
 }
 
 extension UIColor {
+    /// 支持 6 位（RRGGBB）与 8 位（RRGGBBAA）hex
     convenience init(hex: UInt32, alpha: CGFloat = 1.0) {
-        let r = CGFloat((hex >> 16) & 0xFF) / 255.0
-        let g = CGFloat((hex >> 8) & 0xFF) / 255.0
-        let b = CGFloat(hex & 0xFF) / 255.0
-        self.init(red: r, green: g, blue: b, alpha: alpha)
+        if hex > 0xFFFFFF {
+            let r = CGFloat((hex >> 24) & 0xFF) / 255.0
+            let g = CGFloat((hex >> 16) & 0xFF) / 255.0
+            let b = CGFloat((hex >> 8) & 0xFF) / 255.0
+            let a = CGFloat(hex & 0xFF) / 255.0
+            self.init(red: r, green: g, blue: b, alpha: a)
+        } else {
+            let r = CGFloat((hex >> 16) & 0xFF) / 255.0
+            let g = CGFloat((hex >> 8) & 0xFF) / 255.0
+            let b = CGFloat(hex & 0xFF) / 255.0
+            self.init(red: r, green: g, blue: b, alpha: alpha)
+        }
     }
 }
 
@@ -284,12 +302,18 @@ struct CloudsBackground: View {
         CloudSpec(baseX: 0.10, baseY: 0.88, widthFactor: 0.30, heightFactor: 0.05, speed: 10)
     ]
 
-    /// 云朵由多个椭圆鼓包组成（相对偏移与半径）
+    /// 云朵鼓包（相对偏移 x/y 与半径比例）：
+    /// 中间大、两端小、上下错落，形成不规则的云形
     private static let puffs: [(Double, Double, Double)] = [
-        (-0.25, 0.10, 0.75),
-        (0.00, -0.15, 1.00),
-        (0.28, 0.05, 0.80),
-        (0.05, 0.18, 0.90)
+        (-0.42, 0.05, 0.55),
+        (-0.20, -0.18, 0.85),
+        (-0.02, -0.32, 1.05),
+        (0.18, -0.12, 0.90),
+        (0.38, 0.02, 0.62),
+        (0.52, 0.14, 0.45),
+        (-0.30, 0.20, 0.60),
+        (0.05, 0.26, 0.72),
+        (0.34, 0.24, 0.52)
     ]
 
     var body: some View {
@@ -331,9 +355,14 @@ struct CloudsBackground: View {
                 let pr = CGFloat(puff.2 * cloudHeight)
                 cluster.addEllipse(in: CGRect(x: px - pr, y: py - pr, width: pr * 2, height: pr * 2))
             }
+            // 两层绘制：底层柔光雾 + 上层较实云体，云更明显且边缘不规则
             context.drawLayer { layer in
-                layer.addFilter(.blur(radius: 26))
-                layer.fill(cluster, with: .color(.white.opacity(0.75)))
+                layer.addFilter(.blur(radius: cloudHeight * 0.30 + 8))
+                layer.fill(cluster, with: .color(.white.opacity(0.55)))
+            }
+            context.drawLayer { layer in
+                layer.addFilter(.blur(radius: cloudHeight * 0.10 + 2))
+                layer.fill(cluster, with: .color(.white.opacity(0.80)))
             }
         }
     }
@@ -379,7 +408,7 @@ private struct FMGlassFill<S: Shape>: View {
             .opacity(0.68)
             .overlay(
                 shape.stroke(
-                    LinearGradient(colors: [.white.opacity(0.30), .white.opacity(0.08)],
+                    LinearGradient(colors: [.white.opacity(0.42), .white.opacity(0.12)],
                                    startPoint: .topLeading, endPoint: .bottomTrailing),
                     lineWidth: 1
                 )
@@ -447,6 +476,19 @@ extension View {
     }
 }
 
+/// 筛选 chip 背景：激活=强调色实底，非激活=液态玻璃+描边
+struct FMChipBackground: ViewModifier {
+    var active: Bool
+
+    func body(content: Content) -> some View {
+        if active {
+            content.background(FMTheme.accent, in: Capsule())
+        } else {
+            content.fmLiquidGlassCapsule()
+        }
+    }
+}
+
 /// 标签胶囊
 struct FMTag: View {
     let text: String
@@ -464,12 +506,18 @@ struct FMTag: View {
 
 // MARK: - List 行玻璃
 
-/// List 行液态玻璃背景（配合 fmScrollContentBackgroundHidden 使用，与 fmLiquidGlass 同款）
+/// List 行液态玻璃背景（配合 fmScrollContentBackgroundHidden 使用）
+/// 圆角矩形 + 全边描边；应用于 Section 时整体一块圆角玻璃
 struct FMGlassListRow: ViewModifier {
+    var cornerRadius: CGFloat = FMTheme.cornerRadius
+
     func body(content: Content) -> some View {
-        content.listRowBackground(
-            FMGlassFill(shape: Rectangle())
-        )
+        content.listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
+            .listRowBackground(
+                FMGlassFill(shape: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 3)
+            )
     }
 }
 
