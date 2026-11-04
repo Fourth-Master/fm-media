@@ -507,16 +507,18 @@ struct FMTag: View {
 // MARK: - List 行玻璃
 
 /// List 行液态玻璃背景（配合 fmScrollContentBackgroundHidden 使用）
-/// 圆角矩形 + 全边描边；应用于 Section 时整体一块圆角玻璃
+/// 玻璃面随行内容自然撑高，水平缩进 12pt + 圆角描边，隐藏系统分隔线
 struct FMGlassListRow: ViewModifier {
     var cornerRadius: CGFloat = FMTheme.cornerRadius
 
     func body(content: Content) -> some View {
-        content.listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
+        content
+            .padding(.vertical, 4)
+            .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+            .listRowSeparator(.hidden)
             .listRowBackground(
                 FMGlassFill(shape: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 2)
             )
     }
 }

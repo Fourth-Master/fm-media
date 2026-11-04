@@ -25,7 +25,8 @@ struct FMSwipeRow<Actions: View, Content: View>: View {
                     .padding(.trailing, 8)
             }
             content()
-                .background(FMTheme.surface)
+                .fmLiquidGlass(cornerRadius: FMTheme.cornerRadius)
+                .clipShape(RoundedRectangle(cornerRadius: FMTheme.cornerRadius, style: .continuous))
                 .offset(x: currentOffset)
                 .gesture(swipeGesture)
                 .animation(.spring(response: 0.28, dampingFraction: 0.82), value: currentOffset)

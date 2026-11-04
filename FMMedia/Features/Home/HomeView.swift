@@ -268,7 +268,6 @@ struct HomeView: View {
                         }
                     }
                 }
-                .fmLiquidGlass(cornerRadius: FMTheme.cornerRadius)
             }
         }
     }
