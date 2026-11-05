@@ -33,6 +33,10 @@ final class PlayerViewModel: ObservableObject {
     @Published var notice: String?
     /// 打开失败自动重试计数（每次播放最多静默重试一次）
     private var openRetryCount = 0
+    /// 播放中途断流自动续播计数（如拖动进度条时服务器瞬断 I/O error，最多静默续播两次）
+    private var midStreamRetryCount = 0
+    /// 判断是否已成功出画（用于区分"打开失败"与"播放中断流"）
+    private var hadPlayback = false
 
     @Published var cues: [SubtitleCue] = []
     @Published var activeCue: SubtitleCue?
@@ -153,6 +157,8 @@ final class PlayerViewModel: ObservableObject {
         didReachEnd = false
         errorMessage = nil
         openRetryCount = 0
+        midStreamRetryCount = 0
+        hadPlayback = false
         currentTime = 0
         duration = 0
         networkSpeed = 0
@@ -206,6 +212,7 @@ final class PlayerViewModel: ObservableObject {
     private func wire(_ engine: PlaybackEngine) {
         engine.onTime = { [weak self] time in
             guard let self else { return }
+            if time > 0.5 { self.hadPlayback = true }
             self.currentTime = time
             self.updateActiveCue()
             self.updateNowPlaying(force: false)
@@ -253,6 +260,19 @@ final class PlayerViewModel: ObservableObject {
             let position = max(currentTime, request.startAt)
             AppDebugLog.write("[Player] 打开失败，自动重试第 \(openRetryCount) 次 @ \(position)")
             showNotice("服务器数据异常，正在重试…")
+            isLoading = true
+            errorMessage = nil
+            buildEngine(currentKind, at: position)
+            startWatchdog()
+            return
+        }
+
+        // 播放中途断流（拖动进度条后 Range 请求 I/O error 等）：静默从断点续播
+        if hadPlayback, message.contains("播放失败"), midStreamRetryCount < 2 {
+            midStreamRetryCount += 1
+            let position = currentTime
+            AppDebugLog.write("[Player] 播放中断流，自动续播第 \(midStreamRetryCount) 次 @ \(position)")
+            showNotice("网络波动，正在恢复播放…")
             isLoading = true
             errorMessage = nil
             buildEngine(currentKind, at: position)

@@ -534,8 +534,17 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
         setOption(ctx, "audio-client-name", "FMMedia")
         setOption(ctx, "cache", "yes")
         setOption(ctx, "demuxer-max-bytes", "150MiB")
+        // 回退缓存：向后拖动进度条时优先命中内存缓存，避免频繁发起新的 Range 请求
+        //（服务器常对新连接限速，表现为拖动后速度骤降到 <1MB/s）
+        setOption(ctx, "demuxer-max-back-bytes", "100MiB")
         setOption(ctx, "demuxer-readahead-secs", "30")
+        // 大 stream 缓冲：mp4 的 moov/demuxer 会做小跨度来回读，大缓冲减少来回 Range 请求
+        setOption(ctx, "stream-buffer-size", "1MiB")
         setOption(ctx, "network-timeout", "60")
+        // 网络瞬断自动重连：拖动后新 Range 请求若遇 I/O 错误，
+        // ffmpeg 自动重发请求而不是整个文件判死（END_FILE reason=ERROR）
+        setOption(ctx, "stream-lavf-o",
+                  "reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=30")
         setOption(ctx, "force-window", "no")
         // 画质：高质量缩放与抖动（GLES3 非 dumb mode 下生效；GLES2 dumb mode 自动忽略）
         setOption(ctx, "scale", "spline36")
