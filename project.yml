@@ -39,9 +39,3 @@ targets:
     # dependencies:
     #   - package: AMSMB2
     #     product: AMSMB2
-
-    # MobileVLCKit（脚本自动下载到 Vendor/）
-    dependencies:
-      - framework: Vendor/MobileVLCKit.xcframework
-        embed: true
-        codeSign: true

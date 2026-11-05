@@ -103,7 +103,7 @@ struct SettingsData: Codable, Equatable {
     var lastLibraryScan: Date? = nil
     /// 播放内核偏好；可选类型以保证旧版本设置文件仍可解码
     var playerEngine: PlaybackEngineKind? = nil
-    /// 解码方式偏好（VLC 内核）
+    /// 解码方式偏好（MPV 硬解/软解）
     var videoDecode: PlaybackDecodeMode? = nil
 
     /// 实际生效的内核偏好（默认自动）

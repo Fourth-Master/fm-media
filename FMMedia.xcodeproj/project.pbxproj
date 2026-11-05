@@ -7,28 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		F1A0000000000000000000F2 /* MobileVLCKit.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = F1A0000000000000000000F1 /* MobileVLCKit.xcframework */; };
-		F1A0000000000000000000F4 /* MobileVLCKit.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = F1A0000000000000000000F1 /* MobileVLCKit.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		F1A0000000000000000000C3 /* MPVKit in Frameworks */ = {isa = PBXBuildFile; productRef = F1A0000000000000000000C2 /* MPVKit */; };
 /* End PBXBuildFile section */
 
-/* Begin PBXCopyFilesBuildPhase section */
-		F1A0000000000000000000F5 /* Embed Frameworks */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 10;
-			files = (
-				F1A0000000000000000000F4 /* MobileVLCKit.xcframework in Embed Frameworks */,
-			);
-			name = "Embed Frameworks";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXCopyFilesBuildPhase section */
-
 /* Begin PBXFileReference section */
 		F1A000000000000000000005 /* FMMedia.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "FMMedia.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		F1A0000000000000000000F1 /* MobileVLCKit.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = MobileVLCKit.xcframework; path = Vendor/MobileVLCKit.xcframework; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -45,7 +28,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				F1A0000000000000000000C3 /* MPVKit in Frameworks */,
-				F1A0000000000000000000F2 /* MobileVLCKit.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -56,7 +38,6 @@
 			isa = PBXGroup;
 			children = (
 				F1A000000000000000000003 /* FMMedia */,
-				F1A0000000000000000000F1 /* MobileVLCKit.xcframework */,
 				F1A000000000000000000002 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -76,10 +57,8 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = F1A00000000000000000000A /* Build configuration list for PBXNativeTarget "FMMedia" */;
 			buildPhases = (
-				F1A0000000000000000000F3 /* Fetch MobileVLCKit */,
 				F1A000000000000000000006 /* Sources */,
 				F1A000000000000000000007 /* Frameworks */,
-				F1A0000000000000000000F5 /* Embed Frameworks */,
 				F1A000000000000000000008 /* Resources */,
 			);
 			buildRules = (
@@ -163,28 +142,6 @@
 			productName = MPVKit;
 		};
 /* End XCSwiftPackageProductDependency section */
-
-/* Begin PBXShellScriptBuildPhase section */
-		F1A0000000000000000000F3 /* Fetch MobileVLCKit */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-			);
-			name = "Fetch MobileVLCKit";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "\"$SRCROOT/scripts/fetch-vlckit.sh\"\n";
-		};
-/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		F1A000000000000000000006 /* Sources */ = {
@@ -320,10 +277,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
-				FRAMEWORK_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(SRCROOT)/Vendor",
-				);
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
@@ -353,10 +306,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
-				FRAMEWORK_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(SRCROOT)/Vendor",
-				);
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;

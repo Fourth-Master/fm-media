@@ -4,7 +4,7 @@ import MediaPlayer
 import UIKit
 
 /// 播放会话：负责状态聚合、字幕、进度与内核切换
-/// 实际解码播放交给 `PlaybackEngine`（系统 AVPlayer 或 VLC）
+/// 实际解码播放交给 `PlaybackEngine`（MPV 内核）
 @MainActor
 final class PlayerViewModel: ObservableObject {
     struct SubtitleOption: Identifiable, Hashable {
@@ -141,7 +141,7 @@ final class PlayerViewModel: ObservableObject {
 
     init(request: PlaybackRequest) {
         self.request = request
-        // 占位引擎：真正播放前会被 buildEngine 替换，用 VLC 避免提前创建 GL 视图
+        // 占位引擎：真正播放前会被 buildEngine 替换
         self.engine = PlaybackEngineFactory.make(kind: .auto, pathExtension: "")
         configureAudioSession()
         setupRemoteCommands()
@@ -286,7 +286,7 @@ final class PlayerViewModel: ObservableObject {
             : message
     }
 
-    /// 运行时切换解码方式（VLC 内核）
+    /// 运行时切换解码方式
     func switchDecodeMode(_ mode: PlaybackDecodeMode) {
         guard mode != decodeMode else { return }
         decodeMode = mode
@@ -337,7 +337,7 @@ final class PlayerViewModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 33_000_000_000)
             guard !Task.isCancelled, self.engine === expected, self.errorMessage == nil, self.currentTime < 0.5 else { return }
             self.engine.debugDumpState()
-            self.handleEngineError("打开视频超时（45 秒无画面），可尝试切换软件解码或 VLC 内核")
+            self.handleEngineError("打开视频超时（45 秒无画面），可尝试切换软件解码后重试")
         }
     }
 

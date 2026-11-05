@@ -32,16 +32,7 @@ if [ -z "$APP" ]; then
   echo "未找到 .app 产物"; exit 1
 fi
 
-echo "==> 裁剪 + 内嵌框架 ad-hoc 签名"
-VLC_FW="$APP/Frameworks/MobileVLCKit.framework"
-if [ -d "$VLC_FW" ]; then
-  BIN="$VLC_FW/MobileVLCKit"
-  if lipo -info "$BIN" | grep -q "arm64"; then
-    lipo -thin arm64 "$BIN" -output "$BIN.thin" && mv "$BIN.thin" "$BIN"
-    echo "    $(lipo -info "$BIN")"
-  fi
-  codesign --force --sign - --timestamp=none "$VLC_FW" || true
-fi
+echo "==> ad-hoc 签名"
 codesign --force --sign - --timestamp=none "$APP" || true
 
 echo "==> 打包 $OUT_NAME"

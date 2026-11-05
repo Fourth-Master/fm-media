@@ -35,17 +35,6 @@ jobs:
           xcodebuild -version
           xcodebuild -project "FMMedia.xcodeproj" -list
 
-      - name: Cache MobileVLCKit
-        uses: actions/cache@v6
-        with:
-          path: Vendor
-          key: mobilevlckit-3.7.4
-
-      - name: Fetch MobileVLCKit
-        run: |
-          chmod +x scripts/fetch-vlckit.sh
-          ./scripts/fetch-vlckit.sh
-
       - name: Build (unsigned, Release)
         run: |
           set -o pipefail
@@ -71,15 +60,6 @@ jobs:
           APP_DIR="$RUNNER_TEMP/build/Build/Products/Release-iphoneos"
           APP=$(find "$APP_DIR" -maxdepth 1 -name "*.app" | head -1)
           if [ -z "$APP" ]; then echo "no .app"; exit 1; fi
-          VLC_FW="$APP/Frameworks/MobileVLCKit.framework"
-          if [ -d "$VLC_FW" ]; then
-            BIN="$VLC_FW/MobileVLCKit"
-            if lipo -info "$BIN" | grep -q "arm64"; then
-              lipo -thin arm64 "$BIN" -output "$BIN.thin" && mv "$BIN.thin" "$BIN"
-            fi
-            codesign --force --sign - --timestamp=none "$VLC_FW" || true
-            du -sh "$VLC_FW" || true
-          fi
           codesign --force --sign - --timestamp=none "$APP" || true
 
           rm -rf "$RUNNER_TEMP/Payload"

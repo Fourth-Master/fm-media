@@ -4,7 +4,7 @@ import UIKit
 import UniformTypeIdentifiers
 import MediaPlayer
 
-/// 通用播放画面（MPV / VLC 内核共用）
+/// 通用播放画面（MPV 内核）
 struct PlayerSurface: UIViewRepresentable {
     let engine: PlaybackEngine
 

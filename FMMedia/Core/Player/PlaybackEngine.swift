@@ -1,11 +1,11 @@
 import Foundation
 import UIKit
 
-/// 播放内核抽象：MPV（主）与 VLC（回退）共用
+/// 播放内核抽象
 @MainActor
 protocol PlaybackEngine: AnyObject {
     var name: String { get }
-    /// 是否为主内核（失败时上层会尝试回退到 VLC）
+    /// 是否为主内核（失败时上层会尝试回退到软件解码）
     var isNative: Bool { get }
 
     var onTime: ((Double) -> Void)? { get set }
@@ -86,7 +86,7 @@ enum PlayerAspect: String, Codable, CaseIterable, Identifiable, Hashable {
     }
 }
 
-/// 视频解码方式（MPV / VLC 均支持软硬解切换）
+/// 视频解码方式（MPV 支持软硬解切换）
 enum PlaybackDecodeMode: String, Codable, CaseIterable, Identifiable, Equatable, Hashable {
     case auto
     case hardware
@@ -107,15 +107,6 @@ enum PlaybackDecodeMode: String, Codable, CaseIterable, Identifiable, Equatable,
         case .auto: return "优先 VideoToolbox 硬解，失败自动回退软解"
         case .hardware: return "只用硬解，省电；个别编码可能失败"
         case .software: return "只用 CPU 软解，兼容性最好、更耗电"
-        }
-    }
-
-    /// libvlc 的 avcodec-hw 取值
-    var vlcValue: String {
-        switch self {
-        case .auto: return "any"
-        case .hardware: return "videotoolbox"
-        case .software: return "none"
         }
     }
 
@@ -152,7 +143,7 @@ enum PlaybackEngineKind: String, Codable, CaseIterable, Identifiable, Equatable,
 
     var detail: String {
         switch self {
-        case .auto: return "MPV 优先，失败自动回退 VLC"
+        case .auto: return "默认使用 MPV 内核"
         case .mpv: return "FFmpeg + libmpv，格式覆盖最广"
         }
     }
