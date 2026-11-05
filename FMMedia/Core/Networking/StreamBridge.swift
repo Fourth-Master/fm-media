@@ -28,11 +28,14 @@ final class BridgeSpeedMeter: @unchecked Sendable {
     }
 }
 
-// MARK: - 单个桥接流（分段多连接取流）
+// MARK: - 单个桥接流（分段流式多连接取流）
 
-/// 每个远端流一个实例：维护分段缓存窗口，自适应并发从上游拉取
+/// 每个远端流一个实例：
+/// - 段缓存 1MB/段，fetcher 用 URLSession.bytes 边下边写，pump 边读边发（不攒整段）
+/// - 每个连接（mpv 打开的每个 Range 请求）一个独立预取窗口，互不干扰
+/// - 自适应并发 4→12：聚合速度低时自动加连接
 actor BridgeStream {
-    static let segmentSize: Int64 = 4 * 1024 * 1024
+    static let segmentSize: Int64 = 1024 * 1024
     /// 浏览器 UA：部分服务器/WAF 拦截客户端 UA
     static let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.4 Mobile/15E148 Safari/604.1"
 
@@ -40,16 +43,29 @@ actor BridgeStream {
     let url: URL
     let headers: [String: String]
 
+    /// 段：流式缓冲，可能未完成（done=false 时 buffer 也可部分读取）
+    private final class Segment {
+        var buffer = Data()
+        var done = false
+        var errorMessage: String?
+    }
+
+    /// 每个连接的读取窗口（独立 servedSegment，避免多连接互踩）
+    private final class Reader {
+        var servedSegment: Int
+        init(servedSegment: Int) { self.servedSegment = servedSegment }
+    }
+
     private var totalBytes: Int64?
-    private var segments: [Int: Data] = [:]
+    private var segments: [Int: Segment] = [:]
     private var inflight: Set<Int> = []
-    private var failedSegments: Set<Int> = []
+    private var inflightTasks: [Int: Task<Void, Never>] = [:]
     private var waiters: [Int: [CheckedContinuation<Void, Never>]] = [:]
-    private var servedSegment = 0
+    private var readers: [Reader] = []
     private var workers = 4
     private var cancelled = false
-    private var lastAdjustAt: Double = 0
-    private var lastSpeedLogAt: Double = 0
+    private var lastAdjustAt = Date().timeIntervalSinceReferenceDate
+    private var lastSpeedLogAt = Date().timeIntervalSinceReferenceDate
 
     private static let session: URLSession = {
         let config = URLSessionConfiguration.default
@@ -69,6 +85,8 @@ actor BridgeStream {
 
     func cancel() {
         cancelled = true
+        for task in inflightTasks.values { task.cancel() }
+        inflightTasks.removeAll()
         wakeAll()
     }
 
@@ -87,9 +105,14 @@ actor BridgeStream {
             return
         }
         AppDebugLog.write("[Bridge] 连接 offset=\(rawStart)-\(end)")
-        // 新一轮请求：清空失败标记，给上游重新连接的机会
-        failedSegments.removeAll(keepingCapacity: false)
-        servedSegment = Int(rawStart / Self.segmentSize)
+        // 清理上次连接留下的失败段（mpv 重连时重新拉取）
+        segments = segments.filter { $0.value.errorMessage == nil }
+        let reader = Reader(servedSegment: Int(rawStart / Self.segmentSize))
+        readers.append(reader)
+        defer {
+            readers.removeAll { $0 === reader }
+            evictIfNeeded()
+        }
         scheduleFills()
 
         let head = "HTTP/1.1 206 Partial Content\r\n"
@@ -98,12 +121,17 @@ actor BridgeStream {
             + "Content-Range: bytes \(rawStart)-\(end)/\(total)\r\n"
             + "Accept-Ranges: bytes\r\n"
             + "Connection: close\r\n\r\n"
-        guard await Self.sendRaw(connection, data: Data(head.utf8)) else { return }
+        guard await Self.sendRaw(connection, data: Data(head.utf8)) else {
+            connection.cancel()
+            return
+        }
 
         var offset = rawStart
         while offset <= end, !cancelled, !Task.isCancelled {
-            guard let chunk = await readSlice(at: offset, maxLength: 256 * 1024), !chunk.isEmpty else {
-                AppDebugLog.write("[Bridge] 上游中断 @ \(offset)，等待 mpv 重发 Range")
+            guard let chunk = await readSlice(reader, at: offset, maxLength: 256 * 1024), !chunk.isEmpty else {
+                if !cancelled {
+                    AppDebugLog.write("[Bridge] 上游结束 @ \(offset)（EOF/失败），等待 mpv 重发 Range")
+                }
                 break
             }
             guard await Self.sendRaw(connection, data: chunk) else { break }
@@ -141,109 +169,146 @@ actor BridgeStream {
         return nil
     }
 
-    // MARK: 分段调度
+    // MARK: 分段调度（每 reader 独立窗口）
 
     private func scheduleFills() {
-        guard !cancelled, let total = totalBytes else { return }
-        // 正在读取的段最高优先级：绕过并发上限，保证 mpv 当前位置永不饿死（如 seek 后旧段仍在路上）
-        let current = servedSegment
-        if segments[current] == nil, !inflight.contains(current), !failedSegments.contains(current) {
-            inflight.insert(current)
-            Task { await self.fetchSegment(current) }
-        }
-        let lastSegment = Int((total - 1) / Self.segmentSize)
-        let windowEnd = min(servedSegment + workers + 4, lastSegment)
-        guard servedSegment <= windowEnd else { return }
-        var idx = servedSegment
-        while inflight.count < workers, idx <= windowEnd {
-            if segments[idx] == nil, !inflight.contains(idx), !failedSegments.contains(idx) {
-                inflight.insert(idx)
-                Task { await self.fetchSegment(idx) }
+        guard !cancelled, totalBytes != nil else { return }
+        let lastSegment = Int((totalBytes! - 1) / Self.segmentSize)
+        for reader in readers {
+            let cur = reader.servedSegment
+            ensureFetch(cur)   // 当前读取段最高优先级（绕过并发上限，保证永不饿死）
+            let windowEnd = min(cur + workers + 4, lastSegment)
+            var idx = cur + 1
+            while inflight.count < workers, idx <= windowEnd {
+                ensureFetch(idx)
+                idx += 1
             }
-            idx += 1
         }
     }
 
-    private func fetchSegment(_ idx: Int) async {
+    private func ensureFetch(_ idx: Int) {
+        guard !inflight.contains(idx) else { return }
+        let seg: Segment
+        if let existing = segments[idx] {
+            if existing.done { return }
+            seg = existing
+        } else {
+            seg = Segment()
+            segments[idx] = seg
+        }
+        inflight.insert(idx)
+        let task = Task { await self.fetchSegment(idx, seg) }
+        inflightTasks[idx] = task
+    }
+
+    /// 流式拉取一段：边下边写 buffer 并按 256KB 粒度唤醒等待的 pump
+    private func fetchSegment(_ idx: Int, _ seg: Segment) async {
         defer {
             inflight.remove(idx)
+            inflightTasks.removeValue(forKey: idx)
             scheduleFills()
         }
         guard let total = totalBytes, !cancelled else { return }
         let start = Int64(idx) * Self.segmentSize
         let end = min(start + Self.segmentSize, total) - 1
-        guard start <= end else { return }
-        for attempt in 1...3 {
-            if cancelled { return }
-            do {
-                let data = try await fetchRange(start, end)
-                meter.record(data.count)
-                adjustWorkersIfNeeded()
-                logSpeedIfNeeded()
-                segments[idx] = data
-                wake(idx)
-                return
-            } catch {
-                AppDebugLog.write("[Bridge] 段#\(idx) 第\(attempt)次失败: \(error.localizedDescription)")
-                if attempt < 3 { try? await Task.sleep(nanoseconds: UInt64(attempt) * 600_000_000) }
+        guard start <= end else {
+            seg.done = true
+            wake(idx)
+            return
+        }
+        do {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 30
+            applyHeaders(to: &request)
+            request.setValue("bytes=\(start)-\(end)", forHTTPHeaderField: "Range")
+            let (bytes, response) = try await Self.session.bytes(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                throw URLError(.badServerResponse)
             }
+            var recorded = 0
+            var lastWake = 0
+            for try await byte in bytes {
+                if cancelled || Task.isCancelled { return }
+                seg.buffer.append(byte)
+                if seg.buffer.count - lastWake >= 256 * 1024 {
+                    meter.record(seg.buffer.count - recorded)
+                    recorded = seg.buffer.count
+                    lastWake = seg.buffer.count
+                    wake(idx)
+                    adjustWorkersIfNeeded()
+                    logSpeedIfNeeded()
+                }
+            }
+            meter.record(seg.buffer.count - recorded)
+            seg.done = true
+            wake(idx)
+        } catch {
+            if cancelled || Task.isCancelled { return }
+            AppDebugLog.write("[Bridge] 段#\(idx) 失败: \(error.localizedDescription)")
+            seg.errorMessage = error.localizedDescription
+            seg.done = true
+            wake(idx)
         }
-        // 三次重试仍失败：标记该段失败并唤醒等待者（连接断开，mpv 会重发 Range 开新一轮）
-        failedSegments.insert(idx)
-        wake(idx)
     }
 
-    private func fetchRange(_ start: Int64, _ end: Int64) async throws -> Data {
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 30
-        applyHeaders(to: &request)
-        request.setValue("bytes=\(start)-\(end)", forHTTPHeaderField: "Range")
-        let (data, response) = try await Self.session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
-        let expected = Int(end - start + 1)
-        if http.statusCode == 200 {
-            // 服务器忽略 Range：仅第 0 段可整包切片，其余视为失败走重试
-            guard start == 0, !data.isEmpty else { throw URLError(.unsupportedURL) }
-            guard data.count >= expected else { throw URLError(.networkConnectionLost) }
-            return data.subdata(in: 0..<expected)
-        }
-        if data.count > expected { return data.subdata(in: 0..<expected) }
-        if data.count < expected { throw URLError(.networkConnectionLost) }
-        return data
-    }
-
-    private func readSlice(at offset: Int64, maxLength: Int) async -> Data? {
+    /// 读取指定偏移的数据；段未就绪时等待其流入（上游空闲超时/完成/失败都会唤醒）
+    private func readSlice(_ reader: Reader, at offset: Int64, maxLength: Int) async -> Data? {
         guard !cancelled else { return nil }
-        let seg = Int(offset / Self.segmentSize)
+        let segIdx = Int(offset / Self.segmentSize)
         let segOffset = Int(offset % Self.segmentSize)
-        if seg != servedSegment {
-            servedSegment = seg
-            discardOutOfWindow()
+        if segIdx != reader.servedSegment {
+            reader.servedSegment = segIdx
             scheduleFills()
+            evictIfNeeded()
         }
-        while !cancelled, segments[seg] == nil, !failedSegments.contains(seg) {
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                waiters[seg, default: []].append(continuation)
+        while !cancelled {
+            guard let seg = segments[segIdx] else {
+                ensureFetch(segIdx)   // 兜底：理论上 scheduleFills 已覆盖
+                await waitForSegment(segIdx)
+                continue
+            }
+            if seg.error != nil, segOffset >= seg.buffer.count { return nil }  // 上游失败且无更多已到数据
+            if segOffset < seg.buffer.count { break }                           // 有数据可读
+            if seg.done { return nil }                                          // 段正常读完（EOF）
+            await waitForSegment(segIdx)
+        }
+        guard !cancelled, let seg = segments[segIdx] else { return nil }
+        let upper = min(segOffset + maxLength, seg.buffer.count)
+        guard segOffset < upper else { return nil }
+        return seg.buffer.subdata(in: segOffset..<upper)
+    }
+
+    private func waitForSegment(_ idx: Int) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            waiters[idx, default: []].append(continuation)
+        }
+    }
+
+    /// 淘汰缓存：保留任一 reader 窗口内的段，超出总量上限时淘汰窗口外的段
+    private func evictIfNeeded() {
+        guard !readers.isEmpty else {
+            segments.removeAll()
+            return
+        }
+        var retained = Set<Int>()
+        for reader in readers {
+            for i in reader.servedSegment...(reader.servedSegment + workers + 4) {
+                retained.insert(i)
             }
         }
-        guard !cancelled, let data = segments[seg] else { return nil }
-        let upper = min(segOffset + maxLength, data.count)
-        guard segOffset < upper else { return nil }
-        return data.subdata(in: segOffset..<upper)
-    }
-
-    private func discardOutOfWindow() {
-        let keepBehind = servedSegment
-        let keepAhead = servedSegment + workers + 12
-        for idx in segments.keys where idx < keepBehind || idx > keepAhead {
+        let cap = max(24, readers.count * (workers + 4) + 8)
+        guard segments.count > cap else { return }
+        let removable = segments.keys.filter { !retained.contains($0) }.sorted()
+        var excess = segments.count - cap
+        for idx in removable where excess > 0 {
+            guard !inflight.contains(idx) else { continue }
             segments.removeValue(forKey: idx)
+            excess -= 1
         }
     }
 
-    private func wake(_ seg: Int) {
-        guard let list = waiters.removeValue(forKey: seg) else { return }
+    private func wake(_ idx: Int) {
+        guard let list = waiters.removeValue(forKey: idx) else { return }
         list.forEach { $0.resume() }
     }
 
