@@ -161,6 +161,7 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
     private let decodeMode: PlaybackDecodeMode
     private var handle: OpaquePointer?
     private var renderContext: OpaquePointer?
+    private var bridgeStreamID: Int64?
     private var eventLoopStarted = false
     private var eventLoopDone: DispatchSemaphore?
     private var isShuttingDown = false
@@ -239,21 +240,63 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
         pendingSeek = startAt
         attachIfNeeded()
 
-        if descriptor.headers.isEmpty {
-            setProperty("http-header-fields", "")
+        let scheme = descriptor.url.scheme?.lowercased() ?? ""
+        if !descriptor.url.isFileURL, scheme == "http" || scheme == "https" {
+            // 异步预检（不阻塞主线程）：探测 Range 支持与总长，决定走本地桥接还是 mpv 直连
+            Task { @MainActor [weak self] in
+                guard let self, self.handle != nil, !self.isShuttingDown else { return }
+                let probe = await Self.probeStream(url: descriptor.url, headers: descriptor.headers)
+                await self.beginNetworkLoad(descriptor, rate: rate, probe: probe)
+            }
         } else {
-            let fields = descriptor.headers.map { "\($0.key): \($0.value)" }.joined(separator: ",")
-            setProperty("http-header-fields", fields)
-            // 只记录头名称（不打印值，避免泄露密钥），用于验证 WebDAV 等鉴权是否携带
-            AppDebugLog.write("[MPV] 请求头: " + descriptor.headers.keys.joined(separator: ", "))
+            let target = descriptor.url.isFileURL ? descriptor.url.path : descriptor.url.absoluteString
+            beginLoad(descriptor, target: target, bridgedID: nil, rate: rate)
         }
-        if !descriptor.url.isFileURL {
-            // 部分服务器/WAF 拦截 ffmpeg 默认 UA（Lavf），统一用浏览器 UA
-            setProperty("user-agent", Self.browserUserAgent)
+    }
+
+    /// 网络流加载：预检通过且服务器支持 Range 时注册本地桥接，否则 mpv 直连
+    private func beginNetworkLoad(_ descriptor: StreamDescriptor, rate: Double, probe: ProbeResult?) async {
+        guard handle != nil, !isShuttingDown else { return }
+        var bridgedID: Int64?
+        var target = descriptor.url.absoluteString
+        if let probe, probe.supportsRange,
+           let id = StreamBridge.shared.register(url: descriptor.url,
+                                                 headers: descriptor.headers,
+                                                 totalBytes: probe.totalBytes),
+           let localURL = StreamBridge.shared.localURL(for: id) {
+            bridgedID = id
+            target = localURL.absoluteString
         }
+        bridgeStreamID = bridgedID
+        if let bridgedID {
+            AppDebugLog.write("[MPV] 取流方式: 本地桥接 #\(bridgedID)（多连接分段）")
+        } else {
+            AppDebugLog.write("[MPV] 取流方式: mpv 直连")
+        }
+        beginLoad(descriptor, target: target, bridgedID: bridgedID, rate: rate)
+    }
+
+    /// 公共加载尾部：设置请求头/缓存/倍速 → loadfile → 开始速度采样
+    private func beginLoad(_ descriptor: StreamDescriptor, target: String, bridgedID: Int64?, rate: Double) {
+        if bridgedID == nil {
+            if descriptor.headers.isEmpty {
+                setProperty("http-header-fields", "")
+            } else {
+                let fields = descriptor.headers.map { "\($0.key): \($0.value)" }.joined(separator: ",")
+                setProperty("http-header-fields", fields)
+                // 只记录头名称（不打印值，避免泄露密钥），用于验证 WebDAV 等鉴权是否携带
+                AppDebugLog.write("[MPV] 请求头: " + descriptor.headers.keys.joined(separator: ", "))
+            }
+            if !descriptor.url.isFileURL {
+                // 部分服务器/WAF 拦截 ffmpeg 默认 UA（Lavf），统一用浏览器 UA
+                setProperty("user-agent", Self.browserUserAgent)
+            }
+        }
+        // 桥内有预取窗口，mpv 缓存适当收缩省内存；直连时保持大缓存
+        setProperty("demuxer-max-bytes", bridgedID != nil ? "64MiB" : "150MiB")
+        setProperty("demuxer-max-back-bytes", bridgedID != nil ? "32MiB" : "100MiB")
         setProperty("pause", "no")
         setProperty("speed", String(format: "%.2f", rate))
-        let target = descriptor.url.isFileURL ? descriptor.url.path : descriptor.url.absoluteString
         AppDebugLog.write("[MPV] load: isFileURL=" + String(descriptor.url.isFileURL))
         let apiName = renderAPI == .gl ? "GL" : "SW"
         AppDebugLog.write("[MPV] renderAPI=" + apiName + " frameRendered=" + String(frameRendered))
@@ -262,50 +305,51 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
         if loadResult < 0 {
             AppDebugLog.write("[MPV] ERROR: loadfile 命令失败 code=\(loadResult)")
         }
-        if !descriptor.url.isFileURL {
-            preflightProbe(url: descriptor.url, headers: descriptor.headers, userAgent: nil, tag: "默认UA")
-            preflightProbe(url: descriptor.url, headers: descriptor.headers, userAgent: Self.browserUserAgent, tag: "浏览器UA")
-        }
         startSpeedSampling()
     }
 
     /// 常见浏览器 UA：部分服务器/WAF 对非浏览器 UA 的文件请求返回 403/451
     static let browserUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.4 Mobile/15E148 Safari/604.1"
 
-    /// HTTP 预检探针：用 URLSession 直接请求首字节（Range 0-1），测量 TTFB/状态码，
-    /// 与 mpv 内部网络栈（ffmpeg）对比定位“demuxer 卡住”是服务器慢还是 mpv 配置问题
-    private func preflightProbe(url: URL, headers: [String: String], userAgent: String?, tag: String) {
+    /// HTTP 预检探针（async）：Range 0-1 请求，测量 TTFB/状态码，
+    /// 并判断服务器是否支持 Range 断点取流（决定是否启用本地桥接）
+    private static func probeStream(url: URL, headers: [String: String]) async -> ProbeResult? {
         var request = URLRequest(url: url)
         request.timeoutInterval = 15
         for (key, value) in headers {
             request.setValue(value, forHTTPHeaderField: key)
         }
-        if let userAgent {
-            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        }
         request.setValue("bytes=0-1", forHTTPHeaderField: "Range")
         let started = Date()
-        URLSession.shared.dataTask(with: request) { data, response, error in
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
             let elapsed = Int(Date().timeIntervalSince(started) * 1000)
-            if let error {
-                AppDebugLog.write("[MPV] 预检[\(tag)]失败(\(elapsed)ms): \(error.localizedDescription)")
-                return
-            }
             let http = response as? HTTPURLResponse
             let status = http?.statusCode ?? -1
             let contentType = http?.value(forHTTPHeaderField: "Content-Type") ?? "-"
             let contentRange = http?.value(forHTTPHeaderField: "Content-Range") ?? "-"
-            let contentLength = http?.value(forHTTPHeaderField: "Content-Length") ?? "-"
-            let bytes = data?.count ?? 0
-            AppDebugLog.write("[MPV] 预检[\(tag)](\(elapsed)ms): status=\(status) bytes=\(bytes) type=\(contentType) range=\(contentRange) len=\(contentLength)")
+            AppDebugLog.write("[MPV] 预检(\(elapsed)ms): status=\(status) bytes=\(data.count) type=\(contentType) range=\(contentRange)")
             // 非 2xx 时输出响应体前 200 字符（服务器拦截原因通常写在 body 里）
-            if !(200..<300).contains(status), let data, let body = String(data: data.prefix(200), encoding: .utf8) {
+            if !(200..<300).contains(status), let body = String(data: data.prefix(200), encoding: .utf8) {
                 let cleaned = body.replacingOccurrences(of: "\n", with: " ").trimmed
                 if !cleaned.isEmpty {
-                    AppDebugLog.write("[MPV] 预检[\(tag)]响应体: \(cleaned)")
+                    AppDebugLog.write("[MPV] 预检响应体: \(cleaned)")
                 }
             }
-        }.resume()
+            guard let http, status == 206, contentRange != "-" else { return nil }
+            let totalText = contentRange.split(separator: "/").last.map { String($0).trimmingCharacters(in: .whitespaces) } ?? ""
+            guard let total = Int64(totalText) else { return nil }
+            return ProbeResult(supportsRange: true, totalBytes: total)
+        } catch {
+            let elapsed = Int(Date().timeIntervalSince(started) * 1000)
+            AppDebugLog.write("[MPV] 预检失败(\(elapsed)ms): \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    private struct ProbeResult {
+        let supportsRange: Bool
+        let totalBytes: Int64?
     }
 
     func play() { setProperty("pause", "no") }
@@ -344,6 +388,10 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
     func teardown() {
         stopSpeedSampling()
         onSpeed?(0)
+        if let bridged = bridgeStreamID {
+            StreamBridge.shared.unregister(bridged)
+            bridgeStreamID = nil
+        }
         swFallbackTask?.cancel()
         if let renderContext {
             mpv_render_context_set_update_callback(renderContext, nil, nil)
@@ -975,13 +1023,20 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
 
     private func startSpeedSampling() {
         guard speedTimer == nil, let handle else { return }
+        let bridgeID = bridgeStreamID
         let timer = DispatchSource.makeTimerSource(queue: speedQueue)
         timer.schedule(deadline: .now() + 1.0, repeating: 1.0)
         let emit: (Double) -> Void = { [weak self] value in
             Task { @MainActor in self?.onSpeed?(value) }
         }
         timer.setEventHandler {
-            emit(MPVMetrics.cacheSpeed(handle: handle))
+            // 桥接模式下 mpv 的 cache-speed 只反映"桥→mpv"的本地回环速度，
+            // 真实取流速度取两者较大值
+            var speed = MPVMetrics.cacheSpeed(handle: handle)
+            if let bridgeID {
+                speed = max(speed, StreamBridge.shared.speed(for: bridgeID))
+            }
+            emit(speed)
         }
         timer.resume()
         speedTimer = timer
