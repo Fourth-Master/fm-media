@@ -32,7 +32,7 @@ final class BridgeSpeedMeter: @unchecked Sendable {
 
 /// 每个远端流一个实例：维护分段缓存窗口，自适应并发从上游拉取
 actor BridgeStream {
-    static let segmentSize = 4 * 1024 * 1024
+    static let segmentSize: Int64 = 4 * 1024 * 1024
     /// 浏览器 UA：部分服务器/WAF 拦截客户端 UA
     static let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.4 Mobile/15E148 Safari/604.1"
 
