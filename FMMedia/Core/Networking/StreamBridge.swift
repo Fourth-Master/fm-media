@@ -267,7 +267,7 @@ actor BridgeStream {
                 await waitForSegment(segIdx)
                 continue
             }
-            if seg.error != nil, segOffset >= seg.buffer.count { return nil }  // 上游失败且无更多已到数据
+            if seg.errorMessage != nil, segOffset >= seg.buffer.count { return nil }  // 上游失败且无更多已到数据
             if segOffset < seg.buffer.count { break }                           // 有数据可读
             if seg.done { return nil }                                          // 段正常读完（EOF）
             await waitForSegment(segIdx)
