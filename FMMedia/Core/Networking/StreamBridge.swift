@@ -37,7 +37,9 @@ final class BridgeSpeedMeter: @unchecked Sendable {
 /// - 段失败自动重拉（最多 2 轮恢复），不打断 mpv 连接
 /// - 自适应并发：速度低于 2.5MB/s 每 2 秒加 2 连接（上限 16），高于 4.5MB/s 回落
 actor BridgeStream {
-    static let segmentSize: Int64 = 1024 * 1024
+    /// 段 16MB：PC 实测该 CDN 单连接 8MB/s，大段摊薄握手成本；
+    /// 并发互相挤压（12 连接时单流掉到 0.6MB/s），少连接+大段是最优解
+    static let segmentSize: Int64 = 16 * 1024 * 1024
     /// 浏览器 UA：部分服务器/WAF 拦截客户端 UA
     static let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.4 Mobile/15E148 Safari/604.1"
 
@@ -70,8 +72,8 @@ actor BridgeStream {
     private var inflight: Set<Int> = []
     private var waiters: [Int: [CheckedContinuation<Void, Never>]] = [:]
     private var readers: [Reader] = []
-    private var workers = 6            // 期望预取宽度（自适应调整）
-    private let maxUpstream = 12       // 全局上游连接硬上限（实测服务器单 IP 总限速，多连无益，够用即可）
+    private var workers = 2            // 期望预取宽度（PC 实测：CDN 并发互相挤压，2 条最接近单流峰值）
+    private let maxUpstream = 4        // 全局上游连接硬上限（实测 4 连接以上单流骤降）
     private var upstreamCount = 0
     private var dispatching = false
     private var cancelled = false
@@ -253,6 +255,43 @@ actor BridgeStream {
         }
     }
 
+    /// 302 直链缓存：dav 域名对文件 GET 返回 302 到签名 CDN URL，
+    /// 解析一次后段请求直接打 CDN（省每段的 dav 往返 + 双份握手）。
+    /// 签名过期（403）时置空重新解析。
+    private var resolvedURL: URL?
+    private var resolving: Task<URL?, Never>?
+
+    /// 解析 302 直链（带短缓存；并发调用共享同一个解析任务）
+    private func resolveDirectURL() async -> URL? {
+        if let resolvedURL { return resolvedURL }
+        if let resolving { return await resolving.value }
+        let task = Task<URL?, Never> {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 20
+            applyHeaders(to: &request)
+            request.setValue("bytes=0-0", forHTTPHeaderField: "Range")
+            do {
+                let (_, response) = try await Self.session.data(for: request)
+                let http = response as? HTTPURLResponse
+                // URLSession 自动跟随重定向，finalURL 即签名直链；未重定向则用原 URL
+                if let final = http?.url, final.host != url.host {
+                    AppDebugLog.write("[Bridge] 302 直链解析: \(final.host ?? "?")（后续段直连）")
+                    resolvedURL = final
+                    return final
+                }
+                resolvedURL = url
+                return url
+            } catch {
+                AppDebugLog.write("[Bridge] 直链解析失败: \(error.localizedDescription)")
+                return nil
+            }
+        }
+        resolving = task
+        let result = await task.value
+        resolving = nil
+        return result
+    }
+
     /// 流式拉取一段：边下边写 buffer，按 256KB 粒度计速并唤醒等待的 pump；
     /// 单次拉取内最多尝试 3 次（带退避），仍失败则标记错误等待 readSlice 侧恢复
     private func fetchSegment(_ idx: Int, _ seg: Segment) async {
@@ -277,12 +316,20 @@ actor BridgeStream {
                 if cancelled { return }
             }
             do {
-                var request = URLRequest(url: url)
+                // 首选缓存直链；被拒（403 签名过期）时清缓存回退原 URL 重试
+                var targetURL = await resolveDirectURL() ?? url
+                var request = URLRequest(url: targetURL)
                 request.timeoutInterval = 30
                 applyHeaders(to: &request)
                 request.setValue("bytes=\(start)-\(end)", forHTTPHeaderField: "Range")
                 let (bytes, response) = try await Self.session.bytes(for: request)
                 guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                    let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+                    if status == 403 || status == 410, targetURL != url {
+                        AppDebugLog.write("[Bridge] 直链过期(\(status))，重新解析")
+                        resolvedURL = nil
+                        targetURL = url
+                    }
                     throw URLError(.badServerResponse)
                 }
                 var recorded = 0
@@ -407,14 +454,14 @@ actor BridgeStream {
         guard now - lastAdjustAt >= 3 else { return }
         lastAdjustAt = now
         let speed = meter.speed()
-        // 服务器有单 IP 总限速（实测并发 16 仍锁 1.3MB/s），并发只微调：
-        // 慢时缓慢加压（加快填满大缓冲），快于 2.5MB/s 收敛到 6，省电省连接
-        if speed < 1_000_000, workers < maxUpstream {
-            workers += 2
+        // PC 实测：该 CDN 并发互相挤压（单流 8MB/s，4 连接时单流 1.7-3MB/s），
+        // 策略是少连接跑满单流；仅当仍 <1.5MB/s 时试探性 +1
+        if speed < 1_500_000, workers < maxUpstream {
+            workers += 1
             AppDebugLog.write("[Bridge] 速度 \(Self.mb(speed))MB/s 偏低，并发 → \(workers)")
             scheduleFills()
-        } else if speed > 2_500_000, workers > 6 {
-            workers = max(6, workers - 2)
+        } else if speed > 5_000_000, workers > 2 {
+            workers -= 1
             AppDebugLog.write("[Bridge] 速度 \(Self.mb(speed))MB/s 充足，并发 → \(workers)")
         }
     }
