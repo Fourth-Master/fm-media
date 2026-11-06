@@ -77,9 +77,10 @@ actor BridgeStream {
     private var upstreamCount = 0
     private var dispatching = false
     private var cancelled = false
-    /// 目标预取量（字节）：领先最慢 reader 这么多就暂停预取，让大缓冲吸收限速波动
-    /// 约 96MB：1.3MB/s 限速下 75 秒拉满，可领先 1080p 码率（~3MB/s）播放位置 30 秒以上
-    private var prefetchTarget: Int64 = 96 * 1024 * 1024
+    /// 预取上限：每 reader 领先 3 段（24MB）即止。
+    /// 实测整段拉取 20-30MB/s，大缓冲毫无必要——1.8.51 的 96MB 预算配合
+    /// 8MB 段把缓存推到 464MB，iOS 直接 OOM 闪退 + VideoToolbox 分配失败（花屏）
+    private var prefetchTarget: Int64 = 24 * 1024 * 1024
     private var lastAdjustAt = Date().timeIntervalSinceReferenceDate
     private var lastSpeedLogAt = Date().timeIntervalSinceReferenceDate
     private var connectionCount = 0
@@ -193,8 +194,8 @@ actor BridgeStream {
     private func scheduleFills() {
         guard !cancelled, totalBytes != nil else { return }
         let lastSegment = Int((totalBytes! - 1) / Self.segmentSize)
-        // 所有 reader 窗口的并集（窗口 = 当前段 + prefetchTarget 覆盖范围）
-        let windowLen = Int(prefetchTarget / Self.segmentSize) + 4
+        // 所有 reader 窗口的并集（窗口 = 当前段 + 预取 3 段 = 24MB）
+        let windowLen = 3
         var wanted = Set<Int>()
         var currentSegments = Set<Int>()
         for reader in readers {
@@ -381,20 +382,21 @@ actor BridgeStream {
         }
     }
 
-    /// 淘汰缓存：仅保留任一 reader 窗口内的段；窗口按 prefetchTarget 反推
+    /// 淘汰缓存：仅保留任一 reader 窗口内的段；总量硬上限 ~6 段/reader（8MB 段 ≈ 48MB/reader）
+    /// 1.8.51 教训：cap 按 96MB 预算反推 = 52 段 = 416MB，直接 OOM 闪退
     private func evictIfNeeded() {
         guard !readers.isEmpty else {
             segments.removeAll()
             return
         }
-        let windowLen = Int(prefetchTarget / Self.segmentSize) + 8
+        let windowLen = 4   // 当前段 + 预取 3 段
         var retained = Set<Int>()
         for reader in readers {
             for i in reader.servedSegment...(reader.servedSegment + windowLen) {
                 retained.insert(i)
             }
         }
-        let cap = windowLen * max(readers.count, 1) + 12
+        let cap = max(6, readers.count * (windowLen + 1))
         guard segments.count > cap else { return }
         let removable = segments.keys.filter { !retained.contains($0) }.sorted()
         var excess = segments.count - cap
