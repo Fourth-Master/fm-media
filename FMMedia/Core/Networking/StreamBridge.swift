@@ -219,25 +219,20 @@ actor BridgeStream {
         }
         // 关键：若某个当前段还没就绪但上游槽位被非当前段占满，
         // 取消距离任一当前段最远的 in-flight 段让路（16MB 大段拉取要 ~10s，不能让 moov 等两个大段）
-        if let inflightTasks = inflightTasksAll() {
-            for cur in currentSegments {
+        let current = currentSegments
+        let inflightSnapshot = inflight
+        let nonCurrent = inflightSnapshot.subtracting(current)
+        if upstreamCount >= maxUpstream, !nonCurrent.isEmpty {
+            for cur in current {
                 guard let seg = segments[cur], !seg.done else { continue }
                 if inflight.contains(cur) { continue }
-                if upstreamCount >= maxUpstream, !inflight.isSubset(currentSegments) {
-                    let victim = inflight.subtracting(currentSegments).max() ?? inflight.min()
-                    if let victim {
-                        AppDebugLog.write("[Bridge] 段#\(cur) 未就绪，取消段#\(victim)让路")
-                        inflightTasks[victim]?.cancel()
-                    }
+                if let victim = nonCurrent.max() {
+                    AppDebugLog.write("[Bridge] 段#\(cur) 未就绪，取消段#\(victim)让路")
+                    inflightTasks[victim]?.cancel()
                 }
             }
         }
         dispatchPending()
-    }
-
-    /// 只读访问 in-flight 任务表（scheduleFills 内使用）
-    private func inflightTasksAll() -> [Int: Task<Void, Never>]? {
-        inflightTasks.isEmpty ? nil : inflightTasks
     }
 
     private func ensureFetch(_ idx: Int, priority: Bool) {
