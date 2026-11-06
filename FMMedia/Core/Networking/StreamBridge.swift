@@ -311,7 +311,13 @@ actor BridgeStream {
                 // 4 条流挤爆 actor 吞吐（恒定 ~1.5MB/s）且 pump 被饿死（mpv 0 字节 49s），
                 // 这才是从第一天起就卡 1.5MB/s 的根因
                 let (data, response) = try await Self.session.data(for: request)
-                guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                let expected = Int(end - start + 1)
+                // 严格校验：必须 206 且长度精确。拖动后花屏（Invalid NAL unit size 垃圾值）
+                // 的来源就是部分 CDN 节点忽略 Range 返回 200 全文件/短响应 → 错位数据喂给解码器
+                guard let http = response as? HTTPURLResponse,
+                      http.statusCode == 206, data.count == expected else {
+                    let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+                    AppDebugLog.write("[Bridge] 段#\(idx) 响应异常 status=\(status) len=\(data.count) expect=\(expected)")
                     throw URLError(.badServerResponse)
                 }
                 seg.buffer = data
@@ -368,6 +374,12 @@ actor BridgeStream {
             }
             if segOffset < seg.buffer.count { break }   // 有数据可读
             if seg.done { return nil }                  // 段正常读完（EOF）
+            // 孤儿段检测：被抢占取消后既不在途也不在队列，无人负责 → 重新入队
+            // （症状：mpv 同一偏移以 1s/3s/7s/15s 退避无限重连）
+            if !inflight.contains(segIdx), !pending.contains(where: { $0.idx == segIdx }) {
+                ensureFetch(segIdx, priority: true)
+                dispatchPending()
+            }
             await waitForSegment(segIdx)
         }
         guard !cancelled, let seg = segments[segIdx] else { return nil }
@@ -382,8 +394,8 @@ actor BridgeStream {
         }
     }
 
-    /// 淘汰缓存：仅保留任一 reader 窗口内的段；总量硬上限 ~6 段/reader（8MB 段 ≈ 48MB/reader）
-    /// 1.8.51 教训：cap 按 96MB 预算反推 = 52 段 = 416MB，直接 OOM 闪退
+    /// 淘汰缓存：仅保留任一 reader 窗口内的段；总量硬上限 12 段（96MB）。
+    /// 1.8.54 日志：拖动风暴时残留 reader 推高按 reader 数计算的 cap，缓存涨到 35 段
     private func evictIfNeeded() {
         guard !readers.isEmpty else {
             segments.removeAll()
@@ -396,7 +408,7 @@ actor BridgeStream {
                 retained.insert(i)
             }
         }
-        let cap = max(6, readers.count * (windowLen + 1))
+        let cap = 12
         guard segments.count > cap else { return }
         let removable = segments.keys.filter { !retained.contains($0) }.sorted()
         var excess = segments.count - cap

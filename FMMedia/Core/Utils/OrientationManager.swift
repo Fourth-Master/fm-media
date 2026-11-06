@@ -4,8 +4,15 @@ import UIKit
 enum OrientationManager {
     static func toggle() {
         guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
-        let landscape = scene.interfaceOrientation.isLandscape
-        set(landscape ? .portrait : .landscapeRight)
+        // 横屏状态下左右翻转（上下横屏切换），竖屏进入右横屏
+        switch scene.interfaceOrientation {
+        case .landscapeLeft:
+            set(.landscapeRight)
+        case .landscapeRight, .landscape:
+            set(.landscapeLeft)
+        default:
+            set(.landscapeRight)
+        }
     }
 
     static func set(_ mask: UIInterfaceOrientationMask) {
@@ -20,7 +27,7 @@ enum OrientationManager {
         switch mask {
         case .landscapeLeft:
             value = UIInterfaceOrientation.landscapeLeft.rawValue
-        case .landscape, .landscapeRight, .allButUpsideDown:
+        case .landscapeRight:
             value = UIInterfaceOrientation.landscapeRight.rawValue
         default:
             value = UIInterfaceOrientation.portrait.rawValue
