@@ -36,7 +36,7 @@ struct DebugLogViewer: View {
         .toolbar {
             ToolbarItem(placement: .fmTrailing) {
                 Button {
-                    logContent = AppDebugLog.read()
+                    logContent = AppDebugLog.readTail()
                 } label: {
                     Label("刷新", systemImage: "arrow.clockwise")
                 }
@@ -66,6 +66,6 @@ struct DebugLogViewer: View {
             }
             Button("取消", role: .cancel) {}
         }
-        .onAppear { logContent = AppDebugLog.read() }
+        .onAppear { logContent = AppDebugLog.readTail() }
     }
 }
