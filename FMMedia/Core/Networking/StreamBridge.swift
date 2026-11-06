@@ -70,6 +70,7 @@ actor BridgeStream {
     private var segments: [Int: Segment] = [:]
     private var pending: [PendingFetch] = []
     private var inflight: Set<Int> = []
+    private var inflightTasks: [Int: Task<Void, Never>] = [:]
     private var waiters: [Int: [CheckedContinuation<Void, Never>]] = [:]
     private var readers: [Reader] = []
     private var workers = 2            // 期望预取宽度（PC 实测：CDN 并发互相挤压，2 条最接近单流峰值）
@@ -196,9 +197,11 @@ actor BridgeStream {
         // 所有 reader 窗口的并集（窗口 = 当前段 + prefetchTarget 覆盖范围）
         let windowLen = Int(prefetchTarget / Self.segmentSize) + 4
         var wanted = Set<Int>()
+        var currentSegments = Set<Int>()
         for reader in readers {
             let cur = reader.servedSegment
-            wanted.insert(cur)   // 当前读取段最优先，保证 mpv 当前位置永不饿死
+            currentSegments.insert(cur)   // 当前读取段最优先，保证 mpv 当前位置永不饿死
+            wanted.insert(cur)
             var idx = cur + 1
             while idx <= min(cur + windowLen, lastSegment) {
                 wanted.insert(idx)
@@ -211,10 +214,30 @@ actor BridgeStream {
             ensureFetch(idx, priority: false)
         }
         // 当前读取段必须排到队首
-        for reader in readers {
-            ensureFetch(reader.servedSegment, priority: true)
+        for idx in currentSegments {
+            ensureFetch(idx, priority: true)
+        }
+        // 关键：若某个当前段还没就绪但上游槽位被非当前段占满，
+        // 取消距离任一当前段最远的 in-flight 段让路（16MB 大段拉取要 ~10s，不能让 moov 等两个大段）
+        if let inflightTasks = inflightTasksAll() {
+            for cur in currentSegments {
+                guard let seg = segments[cur], !seg.done else { continue }
+                if inflight.contains(cur) { continue }
+                if upstreamCount >= maxUpstream, !inflight.isSubset(currentSegments) {
+                    let victim = inflight.subtracting(currentSegments).max() ?? inflight.min()
+                    if let victim {
+                        AppDebugLog.write("[Bridge] 段#\(cur) 未就绪，取消段#\(victim)让路")
+                        inflightTasks[victim]?.cancel()
+                    }
+                }
+            }
         }
         dispatchPending()
+    }
+
+    /// 只读访问 in-flight 任务表（scheduleFills 内使用）
+    private func inflightTasksAll() -> [Int: Task<Void, Never>]? {
+        inflightTasks.isEmpty ? nil : inflightTasks
     }
 
     private func ensureFetch(_ idx: Int, priority: Bool) {
@@ -249,55 +272,23 @@ actor BridgeStream {
             if seg.done { continue }
             upstreamCount += 1
             inflight.insert(item.idx)
-            Task {
+            let task = Task {
                 await self.fetchSegment(item.idx, seg)
             }
+            inflightTasks[item.idx] = task
         }
-    }
-
-    /// 302 直链缓存：dav 域名对文件 GET 返回 302 到签名 CDN URL，
-    /// 解析一次后段请求直接打 CDN（省每段的 dav 往返 + 双份握手）。
-    /// 签名过期（403）时置空重新解析。
-    private var resolvedURL: URL?
-    private var resolving: Task<URL?, Never>?
-
-    /// 解析 302 直链（带短缓存；并发调用共享同一个解析任务）
-    private func resolveDirectURL() async -> URL? {
-        if let resolvedURL { return resolvedURL }
-        if let resolving { return await resolving.value }
-        let task = Task<URL?, Never> {
-            var request = URLRequest(url: url)
-            request.timeoutInterval = 20
-            applyHeaders(to: &request)
-            request.setValue("bytes=0-0", forHTTPHeaderField: "Range")
-            do {
-                let (_, response) = try await Self.session.data(for: request)
-                let http = response as? HTTPURLResponse
-                // URLSession 自动跟随重定向，finalURL 即签名直链；未重定向则用原 URL
-                if let final = http?.url, final.host != url.host {
-                    AppDebugLog.write("[Bridge] 302 直链解析: \(final.host ?? "?")（后续段直连）")
-                    resolvedURL = final
-                    return final
-                }
-                resolvedURL = url
-                return url
-            } catch {
-                AppDebugLog.write("[Bridge] 直链解析失败: \(error.localizedDescription)")
-                return nil
-            }
-        }
-        resolving = task
-        let result = await task.value
-        resolving = nil
-        return result
     }
 
     /// 流式拉取一段：边下边写 buffer，按 256KB 粒度计速并唤醒等待的 pump；
     /// 单次拉取内最多尝试 3 次（带退避），仍失败则标记错误等待 readSlice 侧恢复
+    /// 注意：必须用原 dav URL（URLSession 自动 302 到签名 CDN）。
+    /// 实测（1.8.49 真机）：直接请求 302 解析出的签名 URL，Range 语义不被节点
+    /// 正确处理（桥速跌回 1.5MB/s），而原 URL 自动跟随是 13-17MB/s，故弃用直连。
     private func fetchSegment(_ idx: Int, _ seg: Segment) async {
         defer {
             upstreamCount -= 1
             inflight.remove(idx)
+            inflightTasks.removeValue(forKey: idx)
             dispatchPending()
         }
         guard let total = totalBytes, !cancelled else { return }
@@ -316,20 +307,12 @@ actor BridgeStream {
                 if cancelled { return }
             }
             do {
-                // 首选缓存直链；被拒（403 签名过期）时清缓存回退原 URL 重试
-                var targetURL = await resolveDirectURL() ?? url
-                var request = URLRequest(url: targetURL)
+                var request = URLRequest(url: url)
                 request.timeoutInterval = 30
                 applyHeaders(to: &request)
                 request.setValue("bytes=\(start)-\(end)", forHTTPHeaderField: "Range")
                 let (bytes, response) = try await Self.session.bytes(for: request)
                 guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                    let status = (response as? HTTPURLResponse)?.statusCode ?? -1
-                    if status == 403 || status == 410, targetURL != url {
-                        AppDebugLog.write("[Bridge] 直链过期(\(status))，重新解析")
-                        resolvedURL = nil
-                        targetURL = url
-                    }
                     throw URLError(.badServerResponse)
                 }
                 var recorded = 0
