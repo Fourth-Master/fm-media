@@ -37,9 +37,8 @@ final class BridgeSpeedMeter: @unchecked Sendable {
 /// - 段失败自动重拉（最多 2 轮恢复），不打断 mpv 连接
 /// - 自适应并发：速度低于 2.5MB/s 每 2 秒加 2 连接（上限 16），高于 4.5MB/s 回落
 actor BridgeStream {
-    /// 段 16MB：PC 实测该 CDN 单连接 8MB/s，大段摊薄握手成本；
-    /// 并发互相挤压（12 连接时单流掉到 0.6MB/s），少连接+大段是最优解
-    static let segmentSize: Int64 = 16 * 1024 * 1024
+    /// 段 8MB：整段拉取（实测单请求 17-20MB/s，8MB ~0.5s 完成，首字节延迟可控）
+    static let segmentSize: Int64 = 8 * 1024 * 1024
     /// 浏览器 UA：部分服务器/WAF 拦截客户端 UA
     static let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.4 Mobile/15E148 Safari/604.1"
 
@@ -306,27 +305,20 @@ actor BridgeStream {
                 request.timeoutInterval = 30
                 applyHeaders(to: &request)
                 request.setValue("bytes=\(start)-\(end)", forHTTPHeaderField: "Range")
-                let (bytes, response) = try await Self.session.bytes(for: request)
+                // 整段拉取（与测速实验同路径，实测 17-20MB/s）。
+                // 1.8.50 及之前的逐字节 AsyncBytes 迭代每个字节都过一次 actor，
+                // 4 条流挤爆 actor 吞吐（恒定 ~1.5MB/s）且 pump 被饿死（mpv 0 字节 49s），
+                // 这才是从第一天起就卡 1.5MB/s 的根因
+                let (data, response) = try await Self.session.data(for: request)
                 guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                     throw URLError(.badServerResponse)
                 }
-                var recorded = 0
-                var lastWake = 0
-                for try await byte in bytes {
-                    if cancelled || Task.isCancelled { return }
-                    seg.buffer.append(byte)
-                    if seg.buffer.count - lastWake >= 256 * 1024 {
-                        meter.record(seg.buffer.count - recorded)
-                        recorded = seg.buffer.count
-                        lastWake = seg.buffer.count
-                        wake(idx)
-                        adjustWorkersIfNeeded()
-                        logSpeedIfNeeded()
-                    }
-                }
-                meter.record(seg.buffer.count - recorded)
+                seg.buffer = data
+                meter.record(data.count)
                 seg.done = true
                 wake(idx)
+                adjustWorkersIfNeeded()
+                logSpeedIfNeeded()
                 return
             } catch {
                 if cancelled || Task.isCancelled { return }
