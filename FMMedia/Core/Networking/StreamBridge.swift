@@ -33,7 +33,9 @@ final class BridgeSpeedMeter: @unchecked Sendable {
 /// 每个远端流一个实例：
 /// - 段缓存 1MB/段，fetcher 用 URLSession.bytes 边下边写，pump 边读边发（不攒整段）
 /// - 每个连接（mpv 打开的每个 Range 请求）一个独立预取窗口，互不干扰
-/// - 自适应并发 4→12：聚合速度低时自动加连接
+/// - 全局上游连接硬上限，防止 mpv 多连接 + 预取叠加触发服务器掐线
+/// - 段失败自动重拉（最多 2 轮恢复），不打断 mpv 连接
+/// - 自适应并发：速度低于 2.5MB/s 每 2 秒加 2 连接（上限 16），高于 4.5MB/s 回落
 actor BridgeStream {
     static let segmentSize: Int64 = 1024 * 1024
     /// 浏览器 UA：部分服务器/WAF 拦截客户端 UA
@@ -48,6 +50,7 @@ actor BridgeStream {
         var buffer = Data()
         var done = false
         var errorMessage: String?
+        var rounds = 0   // 失败重拉轮数（跨失败累计，达上限不再自动恢复）
     }
 
     /// 每个连接的读取窗口（独立 servedSegment，避免多连接互踩）
@@ -56,16 +59,25 @@ actor BridgeStream {
         init(servedSegment: Int) { self.servedSegment = servedSegment }
     }
 
+    private struct PendingFetch {
+        let idx: Int
+        let priority: Bool
+    }
+
     private var totalBytes: Int64?
     private var segments: [Int: Segment] = [:]
+    private var pending: [PendingFetch] = []
     private var inflight: Set<Int> = []
-    private var inflightTasks: [Int: Task<Void, Never>] = [:]
     private var waiters: [Int: [CheckedContinuation<Void, Never>]] = [:]
     private var readers: [Reader] = []
-    private var workers = 4
+    private var workers = 4            // 期望预取宽度（自适应调整）
+    private let maxUpstream = 14       // 全局上游连接硬上限
+    private var upstreamCount = 0
+    private var dispatching = false
     private var cancelled = false
     private var lastAdjustAt = Date().timeIntervalSinceReferenceDate
     private var lastSpeedLogAt = Date().timeIntervalSinceReferenceDate
+    private var connectionCount = 0
 
     private static let session: URLSession = {
         let config = URLSessionConfiguration.default
@@ -85,8 +97,6 @@ actor BridgeStream {
 
     func cancel() {
         cancelled = true
-        for task in inflightTasks.values { task.cancel() }
-        inflightTasks.removeAll()
         wakeAll()
     }
 
@@ -104,9 +114,11 @@ actor BridgeStream {
             Self.sendSimple(connection, status: "416 Range Not Satisfiable")
             return
         }
-        AppDebugLog.write("[Bridge] 连接 offset=\(rawStart)-\(end)")
-        // 清理上次连接留下的失败段（mpv 重连时重新拉取）
-        segments = segments.filter { $0.value.errorMessage == nil }
+        connectionCount += 1
+        // 连接数多（mov demuxer 频繁 seek），限量打日志避免刷屏
+        if connectionCount <= 8 || connectionCount % 40 == 0 {
+            AppDebugLog.write("[Bridge] 连接#\(connectionCount) offset=\(rawStart)")
+        }
         let reader = Reader(servedSegment: Int(rawStart / Self.segmentSize))
         readers.append(reader)
         defer {
@@ -169,44 +181,68 @@ actor BridgeStream {
         return nil
     }
 
-    // MARK: 分段调度（每 reader 独立窗口）
+    // MARK: 分段调度（全局并发上限 + 优先级队列）
 
     private func scheduleFills() {
         guard !cancelled, totalBytes != nil else { return }
         let lastSegment = Int((totalBytes! - 1) / Self.segmentSize)
         for reader in readers {
             let cur = reader.servedSegment
-            ensureFetch(cur)   // 当前读取段最高优先级（绕过并发上限，保证永不饿死）
+            // 当前读取段最优先（插队），保证 mpv 当前位置永不饿死
+            ensureFetch(cur, priority: true)
             let windowEnd = min(cur + workers + 4, lastSegment)
             var idx = cur + 1
-            while inflight.count < workers, idx <= windowEnd {
-                ensureFetch(idx)
+            while idx <= windowEnd {
+                ensureFetch(idx, priority: false)
                 idx += 1
+            }
+        }
+        dispatchPending()
+    }
+
+    private func ensureFetch(_ idx: Int, priority: Bool) {
+        if let seg = segments[idx], seg.done || seg.errorMessage != nil { return }
+        if inflight.contains(idx) { return }
+        if pending.contains(where: { $0.idx == idx }) { return }
+        let item = PendingFetch(idx: idx, priority: priority)
+        if priority {
+            pending.insert(item, at: 0)
+        } else {
+            pending.append(item)
+        }
+    }
+
+    /// 从队列取段并在全局并发上限内启动拉取
+    private func dispatchPending() {
+        guard !dispatching else { return }
+        dispatching = true
+        defer { dispatching = false }
+        while !cancelled, !pending.isEmpty, upstreamCount < maxUpstream {
+            let item = pending.removeFirst()
+            guard !inflight.contains(item.idx) else { continue }
+            let seg: Segment
+            if let existing = segments[item.idx] {
+                seg = existing
+            } else {
+                seg = Segment()
+                segments[item.idx] = seg
+            }
+            if seg.done { continue }
+            upstreamCount += 1
+            inflight.insert(item.idx)
+            Task {
+                await self.fetchSegment(item.idx, seg)
             }
         }
     }
 
-    private func ensureFetch(_ idx: Int) {
-        guard !inflight.contains(idx) else { return }
-        let seg: Segment
-        if let existing = segments[idx] {
-            if existing.done { return }
-            seg = existing
-        } else {
-            seg = Segment()
-            segments[idx] = seg
-        }
-        inflight.insert(idx)
-        let task = Task { await self.fetchSegment(idx, seg) }
-        inflightTasks[idx] = task
-    }
-
-    /// 流式拉取一段：边下边写 buffer 并按 256KB 粒度唤醒等待的 pump
+    /// 流式拉取一段：边下边写 buffer，按 256KB 粒度计速并唤醒等待的 pump；
+    /// 单次拉取内最多尝试 3 次（带退避），仍失败则标记错误等待 readSlice 侧恢复
     private func fetchSegment(_ idx: Int, _ seg: Segment) async {
         defer {
+            upstreamCount -= 1
             inflight.remove(idx)
-            inflightTasks.removeValue(forKey: idx)
-            scheduleFills()
+            dispatchPending()
         }
         guard let total = totalBytes, !cancelled else { return }
         let start = Int64(idx) * Self.segmentSize
@@ -216,42 +252,52 @@ actor BridgeStream {
             wake(idx)
             return
         }
-        do {
-            var request = URLRequest(url: url)
-            request.timeoutInterval = 30
-            applyHeaders(to: &request)
-            request.setValue("bytes=\(start)-\(end)", forHTTPHeaderField: "Range")
-            let (bytes, response) = try await Self.session.bytes(for: request)
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                throw URLError(.badServerResponse)
+        var attempt = 0
+        while attempt < 3, !cancelled, !Task.isCancelled {
+            attempt += 1
+            if attempt > 1 {
+                try? await Task.sleep(nanoseconds: UInt64(attempt) * 500_000_000)
+                if cancelled { return }
             }
-            var recorded = 0
-            var lastWake = 0
-            for try await byte in bytes {
-                if cancelled || Task.isCancelled { return }
-                seg.buffer.append(byte)
-                if seg.buffer.count - lastWake >= 256 * 1024 {
-                    meter.record(seg.buffer.count - recorded)
-                    recorded = seg.buffer.count
-                    lastWake = seg.buffer.count
-                    wake(idx)
-                    adjustWorkersIfNeeded()
-                    logSpeedIfNeeded()
+            do {
+                var request = URLRequest(url: url)
+                request.timeoutInterval = 30
+                applyHeaders(to: &request)
+                request.setValue("bytes=\(start)-\(end)", forHTTPHeaderField: "Range")
+                let (bytes, response) = try await Self.session.bytes(for: request)
+                guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                    throw URLError(.badServerResponse)
                 }
+                var recorded = 0
+                var lastWake = 0
+                for try await byte in bytes {
+                    if cancelled || Task.isCancelled { return }
+                    seg.buffer.append(byte)
+                    if seg.buffer.count - lastWake >= 256 * 1024 {
+                        meter.record(seg.buffer.count - recorded)
+                        recorded = seg.buffer.count
+                        lastWake = seg.buffer.count
+                        wake(idx)
+                        adjustWorkersIfNeeded()
+                        logSpeedIfNeeded()
+                    }
+                }
+                meter.record(seg.buffer.count - recorded)
+                seg.done = true
+                wake(idx)
+                return
+            } catch {
+                if cancelled || Task.isCancelled { return }
+                AppDebugLog.write("[Bridge] 段#\(idx) 第\(attempt)次失败: \(error.localizedDescription)")
             }
-            meter.record(seg.buffer.count - recorded)
-            seg.done = true
-            wake(idx)
-        } catch {
-            if cancelled || Task.isCancelled { return }
-            AppDebugLog.write("[Bridge] 段#\(idx) 失败: \(error.localizedDescription)")
-            seg.errorMessage = error.localizedDescription
-            seg.done = true
-            wake(idx)
         }
+        // 3 次尝试仍失败：标记错误，readSlice 检测后重置重拉（不再直接断 mpv 连接）
+        seg.errorMessage = "attempts exhausted"
+        wake(idx)
     }
 
-    /// 读取指定偏移的数据；段未就绪时等待其流入（上游空闲超时/完成/失败都会唤醒）
+    /// 读取指定偏移的数据；段未就绪时等待其流入；
+    /// 段失败时自动重置重拉（本连接内最多 2 轮，仍失败才断流交给 mpv 重连）
     private func readSlice(_ reader: Reader, at offset: Int64, maxLength: Int) async -> Data? {
         guard !cancelled else { return nil }
         let segIdx = Int(offset / Self.segmentSize)
@@ -261,15 +307,32 @@ actor BridgeStream {
             scheduleFills()
             evictIfNeeded()
         }
+        var resets = 0
         while !cancelled {
             guard let seg = segments[segIdx] else {
-                ensureFetch(segIdx)   // 兜底：理论上 scheduleFills 已覆盖
+                ensureFetch(segIdx, priority: true)
+                dispatchPending()
                 await waitForSegment(segIdx)
                 continue
             }
-            if seg.errorMessage != nil, segOffset >= seg.buffer.count { return nil }  // 上游失败且无更多已到数据
-            if segOffset < seg.buffer.count { break }                           // 有数据可读
-            if seg.done { return nil }                                          // 段正常读完（EOF）
+            if let errorMessage = seg.errorMessage {
+                guard segOffset >= seg.buffer.count else { break }   // 已到数据仍可读
+                // 失败恢复：重置段重拉；同一段最多重置 2 次，避免上游彻底不可用时无限等
+                guard resets < 2 else {
+                    AppDebugLog.write("[Bridge] 段#\(segIdx) 重拉\(resets)轮仍失败: \(errorMessage)")
+                    return nil
+                }
+                resets += 1
+                seg.errorMessage = nil
+                seg.done = false
+                seg.buffer.removeAll(keepingCapacity: true)
+                ensureFetch(segIdx, priority: true)
+                dispatchPending()
+                await waitForSegment(segIdx)
+                continue
+            }
+            if segOffset < seg.buffer.count { break }   // 有数据可读
+            if seg.done { return nil }                  // 段正常读完（EOF）
             await waitForSegment(segIdx)
         }
         guard !cancelled, let seg = segments[segIdx] else { return nil }
@@ -284,7 +347,7 @@ actor BridgeStream {
         }
     }
 
-    /// 淘汰缓存：保留任一 reader 窗口内的段，超出总量上限时淘汰窗口外的段
+    /// 淘汰缓存：仅保留任一 reader 窗口内的段，总量超上限时先淘汰窗口外的
     private func evictIfNeeded() {
         guard !readers.isEmpty else {
             segments.removeAll()
@@ -296,7 +359,7 @@ actor BridgeStream {
                 retained.insert(i)
             }
         }
-        let cap = max(24, readers.count * (workers + 4) + 8)
+        let cap = max(32, readers.count * (workers + 2) + 12)
         guard segments.count > cap else { return }
         let removable = segments.keys.filter { !retained.contains($0) }.sorted()
         var excess = segments.count - cap
@@ -323,14 +386,14 @@ actor BridgeStream {
 
     private func adjustWorkersIfNeeded() {
         let now = Date().timeIntervalSinceReferenceDate
-        guard now - lastAdjustAt >= 5 else { return }
+        guard now - lastAdjustAt >= 2 else { return }
         lastAdjustAt = now
         let speed = meter.speed()
-        if speed < 1_500_000, workers < 12 {
+        if speed < 2_500_000, workers < 16 {
             workers += 2
             AppDebugLog.write("[Bridge] 速度 \(Self.mb(speed))MB/s 偏低，并发 → \(workers)")
             scheduleFills()
-        } else if speed > 3_000_000, workers > 4 {
+        } else if speed > 4_500_000, workers > 4 {
             workers = max(4, workers - 2)
             AppDebugLog.write("[Bridge] 速度 \(Self.mb(speed))MB/s 充足，并发 → \(workers)")
         }
