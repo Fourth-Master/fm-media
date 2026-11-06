@@ -141,7 +141,8 @@ actor BridgeStream {
             + "Content-Range: bytes \(rawStart)-\(end)/\(total)\r\n"
             + "Accept-Ranges: bytes\r\n"
             + "Connection: close\r\n\r\n"
-        guard await Self.sendRaw(connection, data: Data(head.utf8)) else {
+        if let headError = await Self.sendRaw(connection, data: Data(head.utf8)) {
+            AppDebugLog.write("[Bridge] 泵#\(connectionCount)响应头发送失败: \(headError)")
             connection.cancel()
             return
         }
@@ -150,12 +151,18 @@ actor BridgeStream {
         while offset <= end, !cancelled, !Task.isCancelled {
             guard let chunk = await readSlice(reader, at: offset, maxLength: 256 * 1024), !chunk.isEmpty else {
                 if !cancelled {
-                    AppDebugLog.write("[Bridge] 上游结束 @ \(offset)（EOF/失败），等待 mpv 重发 Range")
+                    AppDebugLog.write("[Bridge] 泵#\(connectionCount)结束@\(offset) 原因=数据源EOF/失败")
                 }
                 break
             }
-            guard await Self.sendRaw(connection, data: chunk) else { break }
+            if let sendError = await Self.sendRaw(connection, data: chunk) {
+                AppDebugLog.write("[Bridge] 泵#\(connectionCount)结束@\(offset) 原因=发送失败: \(sendError)")
+                break
+            }
             offset += Int64(chunk.count)
+        }
+        if Task.isCancelled {
+            AppDebugLog.write("[Bridge] 泵#\(connectionCount)取消@\(offset)（连接被对端关闭/seek）")
         }
         connection.cancel()
     }
@@ -478,10 +485,10 @@ actor BridgeStream {
         return Int64(tail)
     }
 
-    nonisolated static func sendRaw(_ connection: NWConnection, data: Data) async -> Bool {
+    nonisolated static func sendRaw(_ connection: NWConnection, data: Data) async -> String? {
         await withCheckedContinuation { continuation in
             connection.send(content: data, completion: .contentProcessed { error in
-                continuation.resume(returning: error == nil)
+                continuation.resume(returning: error?.localizedDescription)
             })
         }
     }
