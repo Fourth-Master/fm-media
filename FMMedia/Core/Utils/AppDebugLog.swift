@@ -40,9 +40,27 @@ enum AppDebugLog {
         filePath = on ? logFileURL.path : ""
         writeCount = 0
         lock.unlock()
+        // 版本更新后自动清除旧版本日志（对排查新版无意义）；
+        // 关闭时也执行检查——App 启动应用设置即会清理旧版本遗留文件
+        clearIfVersionChanged()
         if on {
             write("=== 调试日志开启 === App v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?") · iOS \(UIDevice.current.systemVersion) · \(UIDevice.current.model)")
         }
+    }
+
+    /// 记录日志归属的版本号；版本变化时清掉新旧日志文件
+    private static func clearIfVersionChanged() {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let key = "debugLog.version"
+        guard UserDefaults.standard.string(forKey: key) != version else { return }
+        lock.lock()
+        try? FileManager.default.removeItem(at: logFileURL)
+        try? FileManager.default.removeItem(at: oldLogFileURL)
+        lastMessage = ""
+        repeatCount = 0
+        writeCount = 0
+        lock.unlock()
+        UserDefaults.standard.set(version, forKey: key)
     }
 
     static func write(_ message: String) {
