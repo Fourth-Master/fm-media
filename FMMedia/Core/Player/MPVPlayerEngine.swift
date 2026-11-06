@@ -270,7 +270,6 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
         bridgeStreamID = bridgedID
         if let bridgedID {
             AppDebugLog.write("[MPV] 取流方式: 本地桥接 #\(bridgedID)（多连接分段）")
-            Self.speedExperiment(url: descriptor.url, headers: descriptor.headers)
         } else {
             AppDebugLog.write("[MPV] 取流方式: mpv 直连")
         }
@@ -351,44 +350,6 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
     private struct ProbeResult {
         let supportsRange: Bool
         let totalBytes: Int64?
-    }
-
-    /// 测速实验（后台，不阻塞起播）：回答"为什么桥只有 ~1.5MB/s 而猫头鹰 25MB/s"
-    /// 对比四组：默认头/裸 UA/浏览器 UA/Authorization 去留，各拉 4MB 单连接测速
-    static func speedExperiment(url: URL, headers: [String: String]) {
-        Task {
-            // 等起播稳定后再跑，避免抢带宽
-            try? await Task.sleep(nanoseconds: 8_000_000_000)
-            guard !Task.isCancelled else { return }
-            let variants: [(String, [String: String])] = [
-                ("原样头", headers),
-                ("无Auth", headers.filter { $0.key.caseInsensitiveCompare("Authorization") != .orderedSame }),
-                ("无UA加成", headers.filter { $0.key.caseInsensitiveCompare("User-Agent") != .orderedSame }),
-                ("最小头", headers.filter {
-                    $0.key.caseInsensitiveCompare("Authorization") == .orderedSame
-                        || $0.key.caseInsensitiveCompare("Accept") == .orderedSame
-                })
-            ]
-            for (tag, variantHeaders) in variants {
-                var request = URLRequest(url: url)
-                request.timeoutInterval = 25
-                for (key, value) in variantHeaders {
-                    request.setValue(value, forHTTPHeaderField: key)
-                }
-                request.setValue("bytes=100000000-104857599", forHTTPHeaderField: "Range")
-                let started = Date()
-                do {
-                    let (data, response) = try await URLSession.shared.data(for: request)
-                    let elapsed = Date().timeIntervalSince(started)
-                    let status = (response as? HTTPURLResponse)?.statusCode ?? -1
-                    let speed = elapsed > 0 ? Double(data.count) / elapsed / 1_000_000 : 0
-                    AppDebugLog.write("[测速] \(tag): status=\(status) \(String(format: "%.2f", speed))MB/s (\(data.count)B/\(Int(elapsed * 1000))ms)")
-                } catch {
-                    AppDebugLog.write("[测速] \(tag): 失败 \(error.localizedDescription)")
-                }
-                try? await Task.sleep(nanoseconds: 500_000_000)
-            }
-        }
     }
 
     func play() { setProperty("pause", "no") }
@@ -626,7 +587,10 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
         setOption(ctx, "demuxer-max-back-bytes", "100MiB")
         setOption(ctx, "demuxer-readahead-secs", "30")
         // 大 stream 缓冲：mp4 的 moov/demuxer 会做小跨度来回读，大缓冲减少来回 Range 请求
-        setOption(ctx, "stream-buffer-size", "1MiB")
+        // 24MiB：其中一半用于回退读取。mpv 文档明确说明 mp4 会触发大量双向小 seek
+        // （音视频块交错距离大时每次 seek 都是一次网络级重连）——1MiB 时回退窗口仅
+        // 512KB，实测该文件音视频交错距离 ~11MB，导致连接风暴与重连竞态花屏
+        setOption(ctx, "stream-buffer-size", "24MiB")
         setOption(ctx, "network-timeout", "60")
         // 网络瞬断自动重连：拖动后新 Range 请求若遇 I/O 错误，
         // ffmpeg 自动重发请求而不是整个文件判死（END_FILE reason=ERROR）
