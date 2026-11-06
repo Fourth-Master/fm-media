@@ -89,6 +89,8 @@ actor BridgeStream {
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
         config.urlCache = nil
         config.waitsForConnectivity = false
+        // 默认 6：多段并发时实际只有 6 条物理连接，其余任务排队
+        config.httpMaximumConnectionsPerHost = 16
         return URLSession(configuration: config)
     }()
 
