@@ -70,11 +70,14 @@ actor BridgeStream {
     private var inflight: Set<Int> = []
     private var waiters: [Int: [CheckedContinuation<Void, Never>]] = [:]
     private var readers: [Reader] = []
-    private var workers = 4            // 期望预取宽度（自适应调整）
-    private let maxUpstream = 14       // 全局上游连接硬上限
+    private var workers = 6            // 期望预取宽度（自适应调整）
+    private let maxUpstream = 12       // 全局上游连接硬上限（实测服务器单 IP 总限速，多连无益，够用即可）
     private var upstreamCount = 0
     private var dispatching = false
     private var cancelled = false
+    /// 目标预取量（字节）：领先最慢 reader 这么多就暂停预取，让大缓冲吸收限速波动
+    /// 约 96MB：1.3MB/s 限速下 75 秒拉满，可领先 1080p 码率（~3MB/s）播放位置 30 秒以上
+    private var prefetchTarget: Int64 = 96 * 1024 * 1024
     private var lastAdjustAt = Date().timeIntervalSinceReferenceDate
     private var lastSpeedLogAt = Date().timeIntervalSinceReferenceDate
     private var connectionCount = 0
@@ -190,14 +193,30 @@ actor BridgeStream {
             let cur = reader.servedSegment
             // 当前读取段最优先（插队），保证 mpv 当前位置永不饿死
             ensureFetch(cur, priority: true)
-            let windowEnd = min(cur + workers + 4, lastSegment)
+            // 预取上限：领先量达到 prefetchTarget 就不再排新段（大缓冲策略）
             var idx = cur + 1
-            while idx <= windowEnd {
+            while idx <= lastSegment {
+                if bufferedAhead(from: cur, to: idx) >= prefetchTarget { break }
                 ensureFetch(idx, priority: false)
                 idx += 1
             }
         }
         dispatchPending()
+    }
+
+    /// 统计 [reader 当前段, to) 区间内未完成/未缓存的字节数（决定是否继续预取）
+    private func bufferedAhead(from cur: Int, to: Int) -> Int64 {
+        var pendingBytes: Int64 = 0
+        var idx = cur
+        while idx < to {
+            if let seg = segments[idx], seg.done || seg.errorMessage != nil || inflight.contains(idx) {
+                // 已有段：只统计其中未读完的部分（近似为 0，简化处理）
+            } else {
+                pendingBytes += Self.segmentSize
+            }
+            idx += 1
+        }
+        return pendingBytes
     }
 
     private func ensureFetch(_ idx: Int, priority: Bool) {
@@ -347,19 +366,20 @@ actor BridgeStream {
         }
     }
 
-    /// 淘汰缓存：仅保留任一 reader 窗口内的段，总量超上限时先淘汰窗口外的
+    /// 淘汰缓存：仅保留任一 reader 窗口内的段；窗口按 prefetchTarget 反推
     private func evictIfNeeded() {
         guard !readers.isEmpty else {
             segments.removeAll()
             return
         }
+        let windowLen = Int(prefetchTarget / Self.segmentSize) + 8
         var retained = Set<Int>()
         for reader in readers {
-            for i in reader.servedSegment...(reader.servedSegment + workers + 4) {
+            for i in reader.servedSegment...(reader.servedSegment + windowLen) {
                 retained.insert(i)
             }
         }
-        let cap = max(32, readers.count * (workers + 2) + 12)
+        let cap = windowLen * max(readers.count, 1) + 12
         guard segments.count > cap else { return }
         let removable = segments.keys.filter { !retained.contains($0) }.sorted()
         var excess = segments.count - cap
@@ -386,15 +406,17 @@ actor BridgeStream {
 
     private func adjustWorkersIfNeeded() {
         let now = Date().timeIntervalSinceReferenceDate
-        guard now - lastAdjustAt >= 2 else { return }
+        guard now - lastAdjustAt >= 3 else { return }
         lastAdjustAt = now
         let speed = meter.speed()
-        if speed < 2_500_000, workers < 16 {
+        // 服务器有单 IP 总限速（实测并发 16 仍锁 1.3MB/s），并发只微调：
+        // 慢时缓慢加压（加快填满大缓冲），快于 2.5MB/s 收敛到 6，省电省连接
+        if speed < 1_000_000, workers < maxUpstream {
             workers += 2
             AppDebugLog.write("[Bridge] 速度 \(Self.mb(speed))MB/s 偏低，并发 → \(workers)")
             scheduleFills()
-        } else if speed > 4_500_000, workers > 4 {
-            workers = max(4, workers - 2)
+        } else if speed > 2_500_000, workers > 6 {
+            workers = max(6, workers - 2)
             AppDebugLog.write("[Bridge] 速度 \(Self.mb(speed))MB/s 充足，并发 → \(workers)")
         }
     }

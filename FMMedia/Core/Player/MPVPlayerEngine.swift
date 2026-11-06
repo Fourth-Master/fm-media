@@ -292,9 +292,9 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
                 setProperty("user-agent", Self.browserUserAgent)
             }
         }
-        // 桥内有预取窗口，mpv 缓存适当收缩省内存；直连时保持大缓存
-        setProperty("demuxer-max-bytes", bridgedID != nil ? "64MiB" : "150MiB")
-        setProperty("demuxer-max-back-bytes", bridgedID != nil ? "32MiB" : "100MiB")
+        // 桥内有 ~96MB 大缓冲吸收限速波动，mpv 端缓存收缩即可（省内存）
+        setProperty("demuxer-max-bytes", bridgedID != nil ? "8MiB" : "150MiB")
+        setProperty("demuxer-max-back-bytes", bridgedID != nil ? "8MiB" : "100MiB")
         setProperty("pause", "no")
         setProperty("speed", String(format: "%.2f", rate))
         AppDebugLog.write("[MPV] load: isFileURL=" + String(descriptor.url.isFileURL))
