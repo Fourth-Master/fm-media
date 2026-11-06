@@ -8,7 +8,7 @@ enum OrientationManager {
         switch scene.interfaceOrientation {
         case .landscapeLeft:
             set(.landscapeRight)
-        case .landscapeRight, .landscape:
+        case .landscapeRight:
             set(.landscapeLeft)
         default:
             set(.landscapeRight)
