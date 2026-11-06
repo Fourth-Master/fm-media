@@ -189,34 +189,28 @@ actor BridgeStream {
     private func scheduleFills() {
         guard !cancelled, totalBytes != nil else { return }
         let lastSegment = Int((totalBytes! - 1) / Self.segmentSize)
+        // 所有 reader 窗口的并集（窗口 = 当前段 + prefetchTarget 覆盖范围）
+        let windowLen = Int(prefetchTarget / Self.segmentSize) + 4
+        var wanted = Set<Int>()
         for reader in readers {
             let cur = reader.servedSegment
-            // 当前读取段最优先（插队），保证 mpv 当前位置永不饿死
-            ensureFetch(cur, priority: true)
-            // 预取上限：领先量达到 prefetchTarget 就不再排新段（大缓冲策略）
+            wanted.insert(cur)   // 当前读取段最优先，保证 mpv 当前位置永不饿死
             var idx = cur + 1
-            while idx <= lastSegment {
-                if bufferedAhead(from: cur, to: idx) >= prefetchTarget { break }
-                ensureFetch(idx, priority: false)
+            while idx <= min(cur + windowLen, lastSegment) {
+                wanted.insert(idx)
                 idx += 1
             }
         }
-        dispatchPending()
-    }
-
-    /// 统计 [reader 当前段, to) 区间内未完成/未缓存的字节数（决定是否继续预取）
-    private func bufferedAhead(from cur: Int, to: Int) -> Int64 {
-        var pendingBytes: Int64 = 0
-        var idx = cur
-        while idx < to {
-            if let seg = segments[idx], seg.done || seg.errorMessage != nil || inflight.contains(idx) {
-                // 已有段：只统计其中未读完的部分（近似为 0，简化处理）
-            } else {
-                pendingBytes += Self.segmentSize
-            }
-            idx += 1
+        // 清掉已不在任何窗口内的排队任务（如 seek/续播后，旧位置的预取立即让路）
+        pending.removeAll { !wanted.contains($0.idx) }
+        for idx in wanted {
+            ensureFetch(idx, priority: false)
         }
-        return pendingBytes
+        // 当前读取段必须排到队首
+        for reader in readers {
+            ensureFetch(reader.servedSegment, priority: true)
+        }
+        dispatchPending()
     }
 
     private func ensureFetch(_ idx: Int, priority: Bool) {
@@ -231,7 +225,9 @@ actor BridgeStream {
         }
     }
 
-    /// 从队列取段并在全局并发上限内启动拉取
+    /// 从队列取段并在全局并发上限内启动拉取。
+    /// in-flight 的非窗口任务（如 seek/续播后旧位置的预取）取消后由重排逻辑接管，
+    /// 保证上游槽位永远服务于当前窗口。
     private func dispatchPending() {
         guard !dispatching else { return }
         dispatching = true
