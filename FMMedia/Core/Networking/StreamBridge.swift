@@ -78,7 +78,7 @@ actor StreamFileFetcher {
         self.fileHandle = try? FileHandle(forUpdating: fileURL)
     }
 
-    func matches(url: URL, total: Int64) -> Bool {
+    nonisolated func matches(url: URL, total: Int64) -> Bool {
         self.url == url && totalBytes == total
     }
 
