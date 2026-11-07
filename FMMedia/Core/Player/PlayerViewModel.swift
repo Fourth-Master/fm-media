@@ -390,14 +390,25 @@ final class PlayerViewModel: ObservableObject {
     func seek(to seconds: Double) {
         let upper = duration > 0 ? duration : seconds
         let clamped = min(max(seconds, 0), upper)
+        let delta = abs(clamped - currentTime)
+        guard delta > 0.3 else { return }
         isSeeking = true
         seekTarget = clamped
-        engine.seek(to: clamped)
         currentTime = clamped
         updateActiveCue()
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            self?.isSeeking = false
+        // 大距离 seek（>60s）：重建引擎在新位置重新下载。交错封装的文件
+        // demuxer 会高频跨区 seek（实测 66MB+ 振荡），就地 seek 必然引发
+        // 连接风暴与错位数据；重建后新位置全新下载流，moov 有 CDN 缓存秒回
+        if delta > 60 {
+            isLoading = true
+            buildEngine(currentKind, at: clamped)
+            startWatchdog()
+        } else {
+            engine.seek(to: clamped)
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                self?.isSeeking = false
+            }
         }
     }
 
