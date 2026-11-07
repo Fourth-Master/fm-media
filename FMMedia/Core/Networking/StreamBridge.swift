@@ -310,6 +310,21 @@ actor StreamFileFetcher {
         AppDebugLog.write("[Bridge] 下载 \(String(format: "%.2f", speed / 1_000_000))MB/s（缓存 \(segments.values.filter { $0.done }.count) 段）")
     }
 
+    nonisolated static func sendRaw(_ connection: NWConnection, data: Data) async -> String? {
+        await withCheckedContinuation { continuation in
+            connection.send(content: data, completion: .contentProcessed { error in
+                continuation.resume(returning: error?.localizedDescription)
+            })
+        }
+    }
+
+    nonisolated static func sendSimple(_ connection: NWConnection, status: String) {
+        let head = "HTTP/1.1 \(status)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        connection.send(content: Data(head.utf8), completion: .contentProcessed { _ in
+            connection.cancel()
+        })
+    }
+
     private func applyHeaders(to request: inout URLRequest) {
         for (key, value) in headers {
             request.setValue(value, forHTTPHeaderField: key)
