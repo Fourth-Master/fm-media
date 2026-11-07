@@ -97,7 +97,9 @@ actor BridgeStream {
         self.headers = headers
         self.totalBytes = totalBytes
         self.fileURL = fileURL
-        self.fileHandle = try? FileHandle(forWritingTo: fileURL)
+        // forUpdating = O_RDWR：读Slice 要从这个句柄读数据，
+        // forWritingTo 是只写句柄，读它会抛 ObjC 异常直接崩溃（1.8.58 闪退根因）
+        self.fileHandle = try? FileHandle(forUpdating: fileURL)
     }
 
     func cancel() {
