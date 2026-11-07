@@ -27,14 +27,15 @@ final class BridgeSpeedMeter: @unchecked Sendable {
     }
 }
 
-// MARK: - 流文件下载器（稀疏文件 + 顺序填充）
+// MARK: - 流文件下载器（稀疏文件全量填充）
 
-/// 每个远端流一个实例：
-/// - 后端是稀疏临时文件（truncate 到文件总长，APFS 按需分配物理空间）
-/// - 8MB 段整段拉取（实测 17-20MB/s），严格校验 206+长度后写入磁盘对应偏移
-/// - prepare：先下文件头 + moov（尾部）+ 起播位置窗口，就绪后 mpv 才 loadfile
-/// - mpv 直接 loadfile 本地文件：所有 seek 都是磁盘操作，与网络完全解耦
-/// - 后台持续顺序填充整个文件（20MB/s 下 6.8GB 约 6 分钟填满，此后任意 seek 瞬时）
+/// 每个远端流一个实例（同一 URL 重建引擎时复用，已下载段保留）：
+/// - 稀疏临时文件 truncate 到文件总长，8MB 段整段拉取（实测 17-20MB/s），
+///   严格校验 206+长度后写入磁盘对应偏移
+/// - prepare：先下文件头 + moov（尾部）+ 起播位置窗口，就绪后 mpv loadfile 本地路径
+/// - mpv 直读本地文件：所有 seek 都是磁盘操作，与网络完全解耦
+/// - 后台顺序填充全文件：填满后任意 seek 瞬时；未填满区域若被 demuxer 读到，
+///   因音视频交错距离极端（实测 1GB+）无法完全避免，靠全量填充尽快覆盖
 actor StreamFileFetcher {
     static let segmentSize: Int64 = 8 * 1024 * 1024
     /// 浏览器 UA：部分服务器/WAF 拦截客户端 UA
@@ -44,20 +45,18 @@ actor StreamFileFetcher {
     let url: URL
     let headers: [String: String]
     let fileURL: URL
+    let totalBytes: Int64
 
     private final class Segment {
         var done = false
         var errorMessage: String?
     }
 
-    private let totalBytes: Int64
     private var segments: [Int: Segment] = [:]
     private var fileHandle: FileHandle?
     private var cancelled = false
-    private var fillStarted = false
     private var lastSpeedLogAt = Date().timeIntervalSinceReferenceDate
-    /// 起播窗口是否已就绪（prepare 完成标记）
-    private(set) var prepared = false
+    private var prepared = false
 
     private static let session: URLSession = {
         let config = URLSessionConfiguration.default
@@ -79,6 +78,10 @@ actor StreamFileFetcher {
         self.fileHandle = try? FileHandle(forUpdating: fileURL)
     }
 
+    func matches(url: URL, total: Int64) -> Bool {
+        self.url == url && totalBytes == total
+    }
+
     func cancel() {
         cancelled = true
         try? fileHandle?.close()
@@ -86,10 +89,25 @@ actor StreamFileFetcher {
         try? FileManager.default.removeItem(at: fileURL)
     }
 
+    private var segmentCount: Int {
+        Int((totalBytes - 1) / Self.segmentSize) + 1
+    }
+
+    private func segment(at idx: Int) -> Segment {
+        if let seg = segments[idx] { return seg }
+        let seg = Segment()
+        segments[idx] = seg
+        return seg
+    }
+
+    var downloadedSegments: Int {
+        segments.values.filter { $0.done }.count
+    }
+
     // MARK: 关键区预下载（prepare）
 
     /// 下载 mpv 打开所需的全部区域：文件头 + moov（尾部）+ 起播位置窗口。
-    /// 完成（返回 true）后 mpv 才能 loadfile 本地文件。
+    /// 完成（返回 true）后 mpv 才能 loadfile 本地文件；后台继续填满全文件。
     func prepare(startAtSeconds: Double) async -> Bool {
         guard fileHandle != nil else { return false }
         let segCount = segmentCount
@@ -98,7 +116,7 @@ actor StreamFileFetcher {
         await fetchBatch(tailStart..<segCount, tag: "moov")
         // 2. 文件头（ftyp）
         await fetchBatch(0..<1, tag: "header")
-        // 3. 从 moov 解析总时长 → 换算起播字节偏移（VBR 下为估算，误差由窗口冗余覆盖）
+        // 3. 从 moov 解析总时长 → 换算起播字节偏移（VBR 下为估算，窗口冗余覆盖）
         let totalSeconds = await parseDuration() ?? 0
         var startByte: Int64 = 0
         if totalSeconds > 0, startAtSeconds > 0 {
@@ -116,10 +134,6 @@ actor StreamFileFetcher {
         return true
     }
 
-    private var segmentCount: Int {
-        Int((totalBytes - 1) / Self.segmentSize) + 1
-    }
-
     /// 并发拉取一批段
     private func fetchBatch(_ idxs: any Sequence<Int>, tag: String) async {
         let list = idxs.filter { segments[$0]?.done != true }
@@ -133,18 +147,9 @@ actor StreamFileFetcher {
         }
     }
 
-    private func segment(at idx: Int) -> Segment {
-        if let seg = segments[idx] { return seg }
-        let seg = Segment()
-        segments[idx] = seg
-        return seg
-    }
-
     // MARK: 后台顺序填充
 
     private func startFillLoop() {
-        guard !fillStarted else { return }
-        fillStarted = true
         Task { await fillAll() }
     }
 
@@ -153,20 +158,18 @@ actor StreamFileFetcher {
         let segCount = segmentCount
         var consecutiveFailures = 0
         while !cancelled {
-            guard let handle = fileHandle else { return }
             guard let base = (0..<segCount).first(where: { segments[$0]?.done != true }) else {
                 AppDebugLog.write("[Bridge] 全文件下载完成（\(segCount) 段）")
                 return
             }
             let batch = (base..<min(base + 4, segCount)).filter { segments[$0]?.done != true }
-            var failed = 0
             await withTaskGroup(of: Void.self) { group in
                 for idx in batch {
                     let seg = segment(at: idx)
                     group.addTask { await self.fetchSegment(idx, seg) }
                 }
             }
-            failed = batch.filter { segments[$0]?.done != true }.count
+            let failed = batch.filter { segments[$0]?.done != true }.count
             if failed > 0 {
                 consecutiveFailures += 1
                 if consecutiveFailures >= 3 {
@@ -215,7 +218,6 @@ actor StreamFileFetcher {
                 try handle.write(contentsOf: data)
                 meter.record(data.count)
                 seg.done = true
-                adjustWorkersIfNeeded(speed: meter.speed())
                 logSpeedIfNeeded(speed: meter.speed())
                 return
             } catch {
@@ -266,15 +268,11 @@ actor StreamFileFetcher {
 
     // MARK: 工具
 
-    private func adjustWorkersIfNeeded(speed: Double) {
-        // 磁盘-backed：顺序填充由固定并发（4）完成，无需动态调整
-    }
-
     private func logSpeedIfNeeded(speed: Double) {
         let now = Date().timeIntervalSinceReferenceDate
         guard now - lastSpeedLogAt >= 5 else { return }
         lastSpeedLogAt = now
-        AppDebugLog.write("[Bridge] 下载 \(String(format: "%.2f", speed / 1_000_000))MB/s")
+        AppDebugLog.write("[Bridge] 下载 \(String(format: "%.2f", speed / 1_000_000))MB/s（已下 \(downloadedSegments)/\(segmentCount) 段）")
     }
 
     private func applyHeaders(to request: inout URLRequest) {
@@ -289,24 +287,27 @@ actor StreamFileFetcher {
 
 // MARK: - 流文件管理器
 
-/// 管理稀疏临时文件与下载器生命周期。
+/// 管理稀疏临时文件与下载器生命周期。同一 URL 重建引擎时复用已下载数据。
 /// register/prepare/unregister 仅主线程调用（播放引擎侧保证），speed 允许后台线程读。
 final class StreamBridge {
     static let shared = StreamBridge()
 
     private let lock = NSLock()
     private var nextID: Int64 = 1
-    private var fetchers: [Int64: StreamFileFetcher] = [:]
+    private var current: (id: Int64, fetcher: StreamFileFetcher)?
 
     private init() {}
 
-    /// 注册远端流（需要总长以创建稀疏文件）；失败返回 nil（调用方回退 mpv 直连）
+    /// 注册远端流（需要总长以创建稀疏文件）；同一 URL 复用现有下载器（已下载段保留）
     func register(url: URL, headers: [String: String], totalBytes: Int64?) -> Int64? {
         guard let total = totalBytes, total > 0 else { return nil }
         lock.lock()
+        defer { lock.unlock() }
+        if let existing = current, existing.fetcher.matches(url: url, total: total) {
+            return existing.id   // 同一 URL 重建引擎（seek/重试）：复用已下载数据
+        }
         let id = nextID
         nextID += 1
-        lock.unlock()
         let fileURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("fmstream-\(id)-\(Int(total)).bin")
         FileManager.default.createFile(atPath: fileURL.path, contents: nil)
@@ -315,39 +316,40 @@ final class StreamBridge {
             try? handle.close()
         }
         let fetcher = StreamFileFetcher(url: url, headers: headers, totalBytes: total, fileURL: fileURL)
-        lock.lock()
-        fetchers[id] = fetcher
-        lock.unlock()
+        current = (id, fetcher)
         AppDebugLog.write("[Bridge] 注册流#\(id): \(url.absoluteString.prefix(100)) total=\(total)（稀疏磁盘文件）")
         return id
     }
 
-    /// 预下载关键区（文件头+moov+起播窗口）；完成返回本地文件路径供 mpv loadfile
+    /// 预下载关键区（文件头+moov+起播窗口）；就绪返回本地文件路径供 mpv loadfile
     func prepare(id: Int64, startAtSeconds: Double) async -> URL? {
         lock.lock()
-        let fetcher = fetchers[id]
+        let fetcher = current?.fetcher
+        let matches = current?.id == id
         lock.unlock()
-        guard let fetcher else { return nil }
+        guard matches, let fetcher else { return nil }
         let ok = await fetcher.prepare(startAtSeconds: startAtSeconds)
         guard ok else { return nil }
-        guard let fileURL: URL = await fetcher.fileURLValue else { return nil }
-        return fileURL
+        return await fetcher.fileURLValue
     }
 
     func unregister(_ id: Int64) {
         lock.lock()
-        let fetcher = fetchers.removeValue(forKey: id)
+        let entry = current
         lock.unlock()
-        if let fetcher {
-            AppDebugLog.write("[Bridge] 注销流#\(id)（清理临时文件）")
-            Task { await fetcher.cancel() }
-        }
+        guard let entry, entry.id == id else { return }
+        AppDebugLog.write("[Bridge] 注销流#\(id)（清理临时文件）")
+        Task { await entry.fetcher.cancel() }
+        lock.lock()
+        current = nil
+        lock.unlock()
     }
 
-    /// 桥的聚合下载速度（字节/秒），供网速显示
+    /// 下载速度（字节/秒），供网速显示
     func speed(for id: Int64) -> Double {
         lock.lock(); defer { lock.unlock() }
-        return fetchers[id]?.meter.speed() ?? 0
+        guard current?.id == id else { return 0 }
+        return current?.fetcher.meter.speed() ?? 0
     }
 }
 

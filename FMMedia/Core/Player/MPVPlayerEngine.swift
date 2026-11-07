@@ -1039,13 +1039,13 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
             Task { @MainActor in self?.onSpeed?(value) }
         }
         timer.setEventHandler {
-            // 桥接模式下 mpv 的 cache-speed 只反映"桥→mpv"的本地回环速度，
-            // 真实取流速度取两者较大值
-            var speed = MPVMetrics.cacheSpeed(handle: handle)
+            // 磁盘-backed 模式下 mpv 的 cache-speed 是本地磁盘读速（数千 MB/s，无意义），
+            // 只显示真实网络下载速度
             if let bridgeID {
-                speed = max(speed, StreamBridge.shared.speed(for: bridgeID))
+                emit(StreamBridge.shared.speed(for: bridgeID))
+            } else {
+                emit(MPVMetrics.cacheSpeed(handle: handle))
             }
-            emit(speed)
         }
         timer.resume()
         speedTimer = timer
