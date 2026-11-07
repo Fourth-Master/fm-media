@@ -254,7 +254,8 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
         }
     }
 
-    /// 网络流加载：预检通过且服务器支持 Range 时注册本地桥接，否则 mpv 直连
+    /// 网络流加载：预检通过且服务器支持 Range 时走磁盘-backed 下载器，
+    /// mpv 直接 loadfile 本地稀疏文件（seek 全走磁盘）；否则 mpv 直连
     private func beginNetworkLoad(_ descriptor: StreamDescriptor, rate: Double, probe: ProbeResult?) async {
         guard handle != nil, !isShuttingDown else { return }
         var bridgedID: Int64?
@@ -262,15 +263,20 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
         if let probe, probe.supportsRange,
            let id = StreamBridge.shared.register(url: descriptor.url,
                                                  headers: descriptor.headers,
-                                                 totalBytes: probe.totalBytes),
-           let localURL = StreamBridge.shared.localURL(for: id) {
-            bridgedID = id
-            target = localURL.absoluteString
+                                                 totalBytes: probe.totalBytes) {
+            // 预下载关键区：文件头 + moov（尾部）+ 起播窗口（约 2-4s），就绪后 mpv 才打开
+            let startAt = pendingSeek > 0 ? pendingSeek : 0
+            if let fileURL = await StreamBridge.shared.prepare(id: id, startAtSeconds: startAt) {
+                bridgedID = id
+                target = fileURL.path
+                AppDebugLog.write("[MPV] 取流方式: 本地稀疏文件 #\(id)（mpv 直读磁盘）")
+            } else {
+                AppDebugLog.write("[MPV] 关键区预下载失败，回退 mpv 直连")
+                StreamBridge.shared.unregister(id)
+            }
         }
         bridgeStreamID = bridgedID
-        if let bridgedID {
-            AppDebugLog.write("[MPV] 取流方式: 本地桥接 #\(bridgedID)（多连接分段）")
-        } else {
+        if bridgedID == nil {
             AppDebugLog.write("[MPV] 取流方式: mpv 直连")
         }
         beginLoad(descriptor, target: target, bridgedID: bridgedID, rate: rate)
@@ -292,7 +298,7 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
                 setProperty("user-agent", Self.browserUserAgent)
             }
         }
-        // 桥内有 ~96MB 大缓冲吸收限速波动，mpv 端缓存收缩即可（省内存）
+        // 磁盘-backed：数据在本地文件，mpv 端缓存收缩即可（省内存）
         setProperty("demuxer-max-bytes", bridgedID != nil ? "8MiB" : "150MiB")
         setProperty("demuxer-max-back-bytes", bridgedID != nil ? "8MiB" : "100MiB")
         setProperty("pause", "no")
