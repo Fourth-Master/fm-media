@@ -157,6 +157,8 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
     var onError: ((String) -> Void)?
     var onSpeed: ((Double) -> Void)?
     var onRequireSoftwareRetry: (() -> Void)?
+    /// 正在预下载整个文件（磁盘-backed 全文件填充期间为 true）
+    private(set) var isPreparingDownload = false
 
     private let decodeMode: PlaybackDecodeMode
     private var handle: OpaquePointer?
@@ -264,16 +266,21 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
            let id = StreamBridge.shared.register(url: descriptor.url,
                                                  headers: descriptor.headers,
                                                  totalBytes: probe.totalBytes) {
-            // 预下载关键区：文件头 + moov（尾部）+ 起播窗口（约 2-4s），就绪后 mpv 才打开
+            // 全文件预下载（20MB/s 下 6.8GB 约 5-6 分钟）：坏交错封装的文件
+            // demuxer 会按 moov 索引跳读到任意未下载位置，"边下边播"必然读到
+            // 稀疏零数据（音频 AAC 报错无声 / 视频 Invalid NAL 花屏），
+            // 唯一可靠方案是全文件落盘后纯本地播放
+            isPreparingDownload = true
+            bridgedID = id
             let startAt = pendingSeek > 0 ? pendingSeek : 0
             if let fileURL = await StreamBridge.shared.prepare(id: id, startAtSeconds: startAt) {
-                bridgedID = id
                 target = fileURL.path
-                AppDebugLog.write("[MPV] 取流方式: 本地稀疏文件 #\(id)（mpv 直读磁盘）")
+                AppDebugLog.write("[MPV] 取流方式: 本地完整文件 #\(id)（全文件预下载完成）")
             } else {
-                AppDebugLog.write("[MPV] 关键区预下载失败，回退 mpv 直连")
+                AppDebugLog.write("[MPV] 全文件预下载失败/取消，回退 mpv 直连")
                 StreamBridge.shared.unregister(id)
             }
+            isPreparingDownload = false
         }
         bridgeStreamID = bridgedID
         if bridgedID == nil {

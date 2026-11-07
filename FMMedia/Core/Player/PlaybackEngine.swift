@@ -18,6 +18,8 @@ protocol PlaybackEngine: AnyObject {
     var onSpeed: ((Double) -> Void)? { get set }
     /// 硬解失败时请求上层切换软件解码
     var onRequireSoftwareRetry: (() -> Void)? { get set }
+    /// 正在预下载整个文件（磁盘-backed 模式）；此期间画面必然未出，看门狗应顺延
+    var isPreparingDownload: Bool { get }
 
     func load(_ descriptor: StreamDescriptor, startAt: Double, rate: Double)
     func play()

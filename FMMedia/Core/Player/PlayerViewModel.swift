@@ -333,11 +333,26 @@ final class PlayerViewModel: ObservableObject {
                 AppDebugLog.write("[Player] 12 秒无画面，转储内核状态")
                 self.engine.debugDumpState()
             }
-            // 45 秒无画面：报错并再次转储
-            try? await Task.sleep(nanoseconds: 33_000_000_000)
-            guard !Task.isCancelled, self.engine === expected, self.errorMessage == nil, self.currentTime < 0.5 else { return }
-            self.engine.debugDumpState()
-            self.handleEngineError("打开视频超时（45 秒无画面），可尝试切换软件解码后重试")
+            // 45 秒无画面：报错并再次转储。
+            // 磁盘-backed 全文件预下载期间（isPreparingDownload）画面必然未出，
+            // 看门狗顺延等待（上限 15 分钟），避免长文件预下载被误判超时
+            var waited = 45.0
+            while !Task.isCancelled, self.engine === expected,
+                  self.errorMessage == nil, self.currentTime < 0.5 {
+                if self.engine.isPreparingDownload {
+                    try? await Task.sleep(nanoseconds: 5_000_000_000)
+                    waited += 5
+                    if waited > 900 { break }   // 15 分钟上限，超出按超时报错
+                    continue
+                }
+                if waited >= 45 {
+                    self.engine.debugDumpState()
+                    self.handleEngineError("打开视频超时（45 秒无画面），可尝试切换软件解码后重试")
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                waited += 1
+            }
         }
     }
 

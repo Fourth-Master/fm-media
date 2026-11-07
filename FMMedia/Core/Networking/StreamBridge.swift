@@ -104,33 +104,29 @@ actor StreamFileFetcher {
         segments.values.filter { $0.done }.count
     }
 
-    // MARK: 关键区预下载（prepare）
+    // MARK: 全文件预下载（prepare）
 
-    /// 下载 mpv 打开所需的全部区域：文件头 + moov（尾部）+ 起播位置窗口。
-    /// 完成（返回 true）后 mpv 才能 loadfile 本地文件；后台继续填满全文件。
+    /// 下载整个文件（4 连接并发，20MB/s 下 6.8GB 约 5-6 分钟）。
+    /// 完成后 mpv loadfile 本地路径：视频/音频/任意 seek 全部纯本地，零网络参与。
+    /// 顺序：moov（尾部，解析时长）→ 头部 → 从 0 到 EOF 顺序填充
     func prepare(startAtSeconds: Double) async -> Bool {
         guard fileHandle != nil else { return false }
         let segCount = segmentCount
-        // 1. moov 在尾部：先下最后 2 段
+        // 1. moov 在尾部：先下最后 2 段（解析时长用）
         let tailStart = max(0, segCount - 2)
         await fetchBatch(tailStart..<segCount, tag: "moov")
         // 2. 文件头（ftyp）
         await fetchBatch(0..<1, tag: "header")
-        // 3. 从 moov 解析总时长 → 换算起播字节偏移（VBR 下为估算，窗口冗余覆盖）
         let totalSeconds = await parseDuration() ?? 0
-        var startByte: Int64 = 0
-        if totalSeconds > 0, startAtSeconds > 0 {
-            startByte = min(Int64(startAtSeconds / totalSeconds * Double(totalBytes)), totalBytes - 1)
+        if startAtSeconds > 0, totalSeconds > 0 {
+            let startByte = min(Int64(startAtSeconds / totalSeconds * Double(totalBytes)), totalBytes - 1)
+            AppDebugLog.write("[Bridge] moov 时长 \(String(format: "%.0f", totalSeconds))s → 起播偏移 \(startByte)（请求 \(String(format: "%.0f", startAtSeconds))s）")
         }
-        AppDebugLog.write("[Bridge] moov 时长 \(String(format: "%.0f", totalSeconds))s → 起播偏移 \(startByte)（请求 \(String(format: "%.0f", startAtSeconds))s）")
-        // 4. 起播窗口：起播段 + 后 4 段 + 前 2 段（关键帧可能略早于目标偏移）
-        let startSeg = Int(startByte / Self.segmentSize)
-        var window = Set<Int>()
-        for i in max(0, startSeg - 2)..<min(startSeg + 5, segCount) { window.insert(i) }
-        window.insert(0)
-        await fetchBatch(window, tag: "起播窗口")
+        // 3. 全文件顺序填充（失败段自动重试，连续失败则中止）
+        await fetchAll()
+        guard !cancelled else { return false }
         prepared = true
-        startFillLoop()
+        AppDebugLog.write("[Bridge] 全文件下载完成，开始播放")
         return true
     }
 
@@ -147,20 +143,15 @@ actor StreamFileFetcher {
         }
     }
 
-    // MARK: 后台顺序填充
+    // MARK: 顺序填充
 
-    private func startFillLoop() {
-        Task { await fillAll() }
-    }
-
-    /// 从 0 到 EOF 顺序填充所有未完成段（已完成的跳过）
-    private func fillAll() async {
+    /// 从 0 到 EOF 顺序填充所有未完成段（已完成的跳过），4 连接并发
+    private func fetchAll() async {
         let segCount = segmentCount
         var consecutiveFailures = 0
         while !cancelled {
             guard let base = (0..<segCount).first(where: { segments[$0]?.done != true }) else {
-                AppDebugLog.write("[Bridge] 全文件下载完成（\(segCount) 段）")
-                return
+                return   // 全部完成
             }
             let batch = (base..<min(base + 4, segCount)).filter { segments[$0]?.done != true }
             await withTaskGroup(of: Void.self) { group in
@@ -175,7 +166,7 @@ actor StreamFileFetcher {
                 if consecutiveFailures >= 3 {
                     AppDebugLog.write("[Bridge] 连续 \(consecutiveFailures) 批存在失败段，暂停填充 5 秒")
                     try? await Task.sleep(nanoseconds: 5_000_000_000)
-                    if consecutiveFailures >= 6 { return }   // 上游彻底不可用，停止填充
+                    if consecutiveFailures >= 6 { return }   // 上游彻底不可用，中止（prepare 返回失败）
                 }
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
             } else {
