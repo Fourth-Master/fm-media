@@ -1,4 +1,5 @@
 import Foundation
+import Network
 
 // MARK: - 桥接速度计（线程安全）
 
@@ -27,17 +28,16 @@ final class BridgeSpeedMeter: @unchecked Sendable {
     }
 }
 
-// MARK: - 流文件下载器（稀疏文件全量填充）
+// MARK: - 流文件下载器（按需阻塞读取 + 磁盘段缓存）
 
-/// 每个远端流一个实例（同一 URL 重建引擎时复用，已下载段保留）：
-/// - 稀疏临时文件 truncate 到文件总长，8MB 段整段拉取（实测 17-20MB/s），
-///   严格校验 206+长度后写入磁盘对应偏移
-/// - prepare：先下文件头 + moov（尾部）+ 起播位置窗口，就绪后 mpv loadfile 本地路径
-/// - mpv 直读本地文件：所有 seek 都是磁盘操作，与网络完全解耦
-/// - 后台顺序填充全文件：填满后任意 seek 瞬时；未填满区域若被 demuxer 读到，
-///   因音视频交错距离极端（实测 1GB+）无法完全避免，靠全量填充尽快覆盖
+/// 每个远端流一个实例（猫头鹰同思路的"按需阻塞读取"）：
+/// - 稀疏临时文件做段缓存（2MB/段，写穿磁盘，内存占用≈0）
+/// - mpv 的读请求命中已下载段 → 从磁盘即时返回
+///   未命中 → 实时发起 Range 拉取该段（0.1-0.3s/段），响应挂起等待，永不返回空洞
+/// - 音视频交错距离再大也只是"多几次按需读取"，数据永远正确
+/// - 预取：每个读取位置向前 1-2 段轻量预取，并发全局限流防触发服务器节流
 actor StreamFileFetcher {
-    static let segmentSize: Int64 = 8 * 1024 * 1024
+    static let segmentSize: Int64 = 2 * 1024 * 1024
     /// 浏览器 UA：部分服务器/WAF 拦截客户端 UA
     static let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 15_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.4 Mobile/15E148 Safari/604.1"
 
@@ -53,10 +53,22 @@ actor StreamFileFetcher {
     }
 
     private var segments: [Int: Segment] = [:]
-    private var fileHandle: FileHandle?
+    private var inflight: Set<Int> = []
+    private var inflightTasks: [Int: Task<Void, Never>] = [:]
+    private var waiters: [Int: [CheckedContinuation<Void, Never>]] = [:]
+    private var readers: [Reader] = []
     private var cancelled = false
     private var lastSpeedLogAt = Date().timeIntervalSinceReferenceDate
-    private var prepared = false
+    private var connectionCount = 0
+    /// 预取并发上限；按需读取（mpv 正在等的位置）不受此限，始终立即启动
+    private let maxPrefetchInflight = 2
+    /// 全局硬上限（含按需），防雪崩
+    private let maxHardInflight = 6
+
+    private final class Reader {
+        var servedSegment: Int
+        init(servedSegment: Int) { self.servedSegment = servedSegment }
+    }
 
     private static let session: URLSession = {
         let config = URLSessionConfiguration.default
@@ -74,113 +86,161 @@ actor StreamFileFetcher {
         self.headers = headers
         self.totalBytes = totalBytes
         self.fileURL = fileURL
-        // forUpdating = O_RDWR：读服务要从这个句柄读数据（forWritingTo 是只写，读会崩）
+        // forUpdating = O_RDWR（forWritingTo 只写，读会抛 ObjC 异常崩溃）
         self.fileHandle = try? FileHandle(forUpdating: fileURL)
     }
 
-    nonisolated func matches(url: URL, total: Int64) -> Bool {
-        self.url == url && totalBytes == total
-    }
+    private var fileHandle: FileHandle?
 
     func cancel() {
         cancelled = true
+        for task in inflightTasks.values { task.cancel() }
+        inflightTasks.removeAll()
+        wakeAll()
         try? fileHandle?.close()
         fileHandle = nil
         try? FileManager.default.removeItem(at: fileURL)
     }
 
-    private var segmentCount: Int {
-        Int((totalBytes - 1) / Self.segmentSize) + 1
-    }
+    // MARK: 请求服务
 
-    private func segment(at idx: Int) -> Segment {
-        if let seg = segments[idx] { return seg }
-        let seg = Segment()
-        segments[idx] = seg
-        return seg
-    }
-
-    var downloadedSegments: Int {
-        segments.values.filter { $0.done }.count
-    }
-
-    // MARK: 全文件预下载（prepare）
-
-    /// 下载整个文件（4 连接并发，20MB/s 下 6.8GB 约 5-6 分钟）。
-    /// 完成后 mpv loadfile 本地路径：视频/音频/任意 seek 全部纯本地，零网络参与。
-    /// 顺序：moov（尾部，解析时长）→ 头部 → 从 0 到 EOF 顺序填充
-    func prepare(startAtSeconds: Double) async -> Bool {
-        guard fileHandle != nil else { return false }
-        let segCount = segmentCount
-        // 1. moov 在尾部：先下最后 2 段（解析时长用）
-        let tailStart = max(0, segCount - 2)
-        await fetchBatch(tailStart..<segCount, tag: "moov")
-        // 2. 文件头（ftyp）
-        await fetchBatch(0..<1, tag: "header")
-        let totalSeconds = await parseDuration() ?? 0
-        if startAtSeconds > 0, totalSeconds > 0 {
-            let startByte = min(Int64(startAtSeconds / totalSeconds * Double(totalBytes)), totalBytes - 1)
-            AppDebugLog.write("[Bridge] moov 时长 \(String(format: "%.0f", totalSeconds))s → 起播偏移 \(startByte)（请求 \(String(format: "%.0f", startAtSeconds))s）")
+    /// 服务一个 mpv 请求：回 206 头后从 rawStart 顺序泵数据到 rawEnd
+    func serve(connection: NWConnection, rawStart: Int64, rawEnd: Int64?) async {
+        guard !cancelled else {
+            Self.sendSimple(connection, status: "502 Bad Gateway")
+            return
         }
-        // 3. 全文件顺序填充（失败段自动重试，连续失败则中止）
-        await fetchAll()
-        guard !cancelled else { return false }
-        prepared = true
-        AppDebugLog.write("[Bridge] 全文件下载完成，开始播放")
-        return true
-    }
+        var end = rawEnd ?? (totalBytes - 1)
+        if end >= totalBytes { end = totalBytes - 1 }
+        guard rawStart >= 0, rawStart <= end else {
+            Self.sendSimple(connection, status: "416 Range Not Satisfiable")
+            return
+        }
+        connectionCount += 1
+        if connectionCount <= 8 || connectionCount % 200 == 0 {
+            AppDebugLog.write("[Bridge] 连接#\(connectionCount) offset=\(rawStart)")
+        }
+        let reader = Reader(servedSegment: Int(rawStart / Self.segmentSize))
+        readers.append(reader)
+        defer {
+            readers.removeAll { $0 === reader }
+        }
 
-    /// 并发拉取一批段
-    private func fetchBatch(_ idxs: any Sequence<Int>, tag: String) async {
-        let list = idxs.filter { segments[$0]?.done != true }
-        guard !list.isEmpty else { return }
-        AppDebugLog.write("[Bridge] 预下载[\(tag)]: \(list.count) 段")
-        await withTaskGroup(of: Void.self) { group in
-            for idx in list {
-                let seg = segment(at: idx)
-                group.addTask { await self.fetchSegment(idx, seg) }
+        let head = "HTTP/1.1 206 Partial Content\r\n"
+            + "Content-Type: application/octet-stream\r\n"
+            + "Content-Length: \(end - rawStart + 1)\r\n"
+            + "Content-Range: bytes \(rawStart)-\(end)/\(totalBytes)\r\n"
+            + "Accept-Ranges: bytes\r\n"
+            + "Connection: close\r\n\r\n"
+        if let headError = await Self.sendRaw(connection, data: Data(head.utf8)) {
+            AppDebugLog.write("[Bridge] 泵#\(connectionCount)响应头发送失败: \(headError)")
+            connection.cancel()
+            return
+        }
+
+        var offset = rawStart
+        while offset <= end, !cancelled, !Task.isCancelled {
+            guard let chunk = await readSlice(reader, at: offset, maxLength: 256 * 1024), !chunk.isEmpty else {
+                if !cancelled {
+                    AppDebugLog.write("[Bridge] 泵#\(connectionCount)结束@\(offset) 原因=数据源失败")
+                }
+                break
             }
+            if let sendError = await Self.sendRaw(connection, data: chunk) {
+                AppDebugLog.write("[Bridge] 泵#\(connectionCount)结束@\(offset) 原因=发送失败: \(sendError)")
+                break
+            }
+            offset += Int64(chunk.count)
         }
+        if Task.isCancelled {
+            AppDebugLog.write("[Bridge] 泵#\(connectionCount)取消@\(offset)（对端关闭/seek）")
+        }
+        connection.cancel()
     }
 
-    // MARK: 顺序填充
+    // MARK: 按需读取
 
-    /// 从 0 到 EOF 顺序填充所有未完成段（已完成的跳过），4 连接并发
-    private func fetchAll() async {
-        let segCount = segmentCount
-        var consecutiveFailures = 0
+    /// 读取指定偏移；段未就绪时实时拉取（响应挂起等待），永不返回空洞数据
+    private func readSlice(_ reader: Reader, at offset: Int64, maxLength: Int) async -> Data? {
+        guard !cancelled, let handle = fileHandle else { return nil }
+        let segIdx = Int(offset / Self.segmentSize)
+        let segOffset = Int(offset % Self.segmentSize)
+        if segIdx != reader.servedSegment {
+            reader.servedSegment = segIdx
+        }
+        var resets = 0
         while !cancelled {
-            guard let base = (0..<segCount).first(where: { segments[$0]?.done != true }) else {
-                return   // 全部完成
+            guard let seg = segments[segIdx] else {
+                startFetch(segIdx, onDemand: true)
+                await waitForSegment(segIdx)
+                continue
             }
-            let batch = (base..<min(base + 4, segCount)).filter { segments[$0]?.done != true }
-            await withTaskGroup(of: Void.self) { group in
-                for idx in batch {
-                    let seg = segment(at: idx)
-                    group.addTask { await self.fetchSegment(idx, seg) }
+            if seg.done { break }
+            if let errorMessage = seg.errorMessage {
+                // 失败恢复：重置重拉；同段最多 2 轮，仍失败断流交给 mpv 重连
+                guard resets < 2 else {
+                    AppDebugLog.write("[Bridge] 段#\(segIdx) 重拉\(resets)轮仍失败: \(errorMessage)")
+                    return nil
                 }
+                resets += 1
+                seg.errorMessage = nil
+                startFetch(segIdx, onDemand: true)
+                await waitForSegment(segIdx)
+                continue
             }
-            let failed = batch.filter { segments[$0]?.done != true }.count
-            if failed > 0 {
-                consecutiveFailures += 1
-                if consecutiveFailures >= 3 {
-                    AppDebugLog.write("[Bridge] 连续 \(consecutiveFailures) 批存在失败段，暂停填充 5 秒")
-                    try? await Task.sleep(nanoseconds: 5_000_000_000)
-                    if consecutiveFailures >= 6 { return }   // 上游彻底不可用，中止（prepare 返回失败）
-                }
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-            } else {
-                consecutiveFailures = 0
+            // 孤儿段检测：被取消后无人负责 → 重新启动
+            if !inflight.contains(segIdx) {
+                startFetch(segIdx, onDemand: true)
             }
+            await waitForSegment(segIdx)
+        }
+        guard !cancelled, let seg = segments[segIdx], seg.done else { return nil }
+        let segEnd = min(Int64(segIdx + 1) * Self.segmentSize, totalBytes)
+        let readLen = Int(min(Int64(maxLength), segEnd - offset))
+        guard readLen > 0 else { return nil }
+        handle.seek(toFileOffset: UInt64(offset))
+        return handle.readData(ofLength: readLen)
+    }
+
+    private func waitForSegment(_ idx: Int) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            waiters[idx, default: []].append(continuation)
         }
     }
 
+    // MARK: 段获取
+
+    /// 启动一段拉取（onDemand = mpv 正在等待的位置，绕过预取并发限制立即启动）
+    private func startFetch(_ idx: Int, onDemand: Bool) {
+        if let seg = segments[idx], seg.done || seg.errorMessage != nil { return }
+        if inflight.contains(idx) { return }
+        if !onDemand, inflight.count >= maxPrefetchInflight { return }
+        let seg: Segment
+        if let existing = segments[idx] {
+            seg = existing
+        } else {
+            seg = Segment()
+            segments[idx] = seg
+        }
+        inflight.insert(idx)
+        let task = Task { await self.fetchSegment(idx, seg) }
+        inflightTasks[idx] = task
+    }
+
+    /// 拉取一段：整段 data(for:)（2MB @15MB/s ≈ 0.15s），严格校验后写盘对应偏移
     private func fetchSegment(_ idx: Int, _ seg: Segment) async {
+        defer {
+            inflight.remove(idx)
+            inflightTasks.removeValue(forKey: idx)
+            wake(idx)
+            prefetchAround()
+        }
         guard !cancelled else { return }
         let start = Int64(idx) * Self.segmentSize
         let end = min(start + Self.segmentSize, totalBytes) - 1
         guard start <= end else {
             seg.done = true
+            wake(idx)
             return
         }
         var attempt = 0
@@ -209,6 +269,7 @@ actor StreamFileFetcher {
                 try handle.write(contentsOf: data)
                 meter.record(data.count)
                 seg.done = true
+                wake(idx)
                 logSpeedIfNeeded(speed: meter.speed())
                 return
             } catch {
@@ -217,44 +278,27 @@ actor StreamFileFetcher {
             }
         }
         seg.errorMessage = "attempts exhausted"
+        wake(idx)
     }
 
-    // MARK: moov 时长解析
+    /// 轻量预取：每个读取位置向前补 2 段（受并发限制，仅平滑读取，不激进）
+    private func prefetchAround() {
+        for reader in readers {
+            startFetch(reader.servedSegment + 1, onDemand: false)
+            startFetch(reader.servedSegment + 2, onDemand: false)
+        }
+    }
 
-    /// 从已下载的尾部数据解析 mvhd 的总时长（秒）；失败返回 nil
-    private func parseDuration() async -> Double? {
-        guard let handle = fileHandle else { return nil }
-        let tailSeg = max(0, segmentCount - 2)
-        let start = Int64(tailSeg) * Self.segmentSize
-        let length = Int(totalBytes - start)
-        handle.seek(toFileOffset: UInt64(start))
-        let data = handle.readData(ofLength: length)
-        guard !data.isEmpty else { return nil }
-        guard let marker = data.range(of: Data("mvhd".utf8)) else {
-            AppDebugLog.write("[Bridge] moov 中未找到 mvhd")
-            return nil
+    private func wake(_ idx: Int) {
+        guard let list = waiters.removeValue(forKey: idx) else { return }
+        list.forEach { $0.resume() }
+    }
+
+    private func wakeAll() {
+        for list in waiters.values {
+            list.forEach { $0.resume() }
         }
-        // mvhd: size(4)+type(4)+version(1)+flags(3)+ctime+mtime+timescale+duration
-        let base = marker.upperBound   // version 起始
-        guard base + 20 <= data.count else { return nil }
-        let version = data[base]
-        let bytes = [UInt8](data)
-        func u32(_ offset: Int) -> UInt64 {
-            UInt64(bytes[offset]) << 24 | UInt64(bytes[offset + 1]) << 16 | UInt64(bytes[offset + 2]) << 8 | UInt64(bytes[offset + 3])
-        }
-        var offset = base + 4                     // 跳过 version+flags
-        offset += version == 1 ? 16 : 8           // creation + modification
-        let timescale = u32(offset)
-        offset += 4
-        var duration: UInt64
-        if version == 1 {
-            guard offset + 8 <= bytes.count else { return nil }
-            duration = u32(offset) << 32 | u32(offset + 4)
-        } else {
-            duration = u32(offset)
-        }
-        guard timescale > 0, duration > 0 else { return nil }
-        return Double(duration) / Double(timescale)
+        waiters.removeAll()
     }
 
     // MARK: 工具
@@ -263,7 +307,7 @@ actor StreamFileFetcher {
         let now = Date().timeIntervalSinceReferenceDate
         guard now - lastSpeedLogAt >= 5 else { return }
         lastSpeedLogAt = now
-        AppDebugLog.write("[Bridge] 下载 \(String(format: "%.2f", speed / 1_000_000))MB/s（已下 \(downloadedSegments)/\(segmentCount) 段）")
+        AppDebugLog.write("[Bridge] 下载 \(String(format: "%.2f", speed / 1_000_000))MB/s（缓存 \(segments.values.filter { $0.done }.count) 段）")
     }
 
     private func applyHeaders(to request: inout URLRequest) {
@@ -276,27 +320,29 @@ actor StreamFileFetcher {
     }
 }
 
-// MARK: - 流文件管理器
+// MARK: - 本地桥接服务器
 
-/// 管理稀疏临时文件与下载器生命周期。同一 URL 重建引擎时复用已下载数据。
-/// register/prepare/unregister 仅主线程调用（播放引擎侧保证），speed 允许后台线程读。
+/// mpv 从 127.0.0.1 取流，桥按需从网络拉取并缓存到稀疏磁盘文件。
+/// register/localURL/unregister 仅主线程调用（播放引擎侧保证），speed 允许后台线程读。
 final class StreamBridge {
     static let shared = StreamBridge()
 
-    private let lock = NSLock()
+    private var listener: NWListener?
+    private var port: UInt16?
     private var nextID: Int64 = 1
-    private var current: (id: Int64, fetcher: StreamFileFetcher)?
+
+    private let streamsLock = NSLock()
+    private var streams: [Int64: StreamFileFetcher] = [:]
+
+    private let queue = DispatchQueue(label: "fmmedia.streambridge", qos: .userInitiated)
 
     private init() {}
 
-    /// 注册远端流（需要总长以创建稀疏文件）；同一 URL 复用现有下载器（已下载段保留）
+    // MARK: 注册表
+
+    /// 注册远端流；服务器启动失败返回 nil（调用方回退 mpv 直连）
     func register(url: URL, headers: [String: String], totalBytes: Int64?) -> Int64? {
-        guard let total = totalBytes, total > 0 else { return nil }
-        lock.lock()
-        defer { lock.unlock() }
-        if let existing = current, existing.fetcher.matches(url: url, total: total) {
-            return existing.id   // 同一 URL 重建引擎（seek/重试）：复用已下载数据
-        }
+        guard ensureStarted(), let total = totalBytes, total > 0 else { return nil }
         let id = nextID
         nextID += 1
         let fileURL = FileManager.default.temporaryDirectory
@@ -307,45 +353,150 @@ final class StreamBridge {
             try? handle.close()
         }
         let fetcher = StreamFileFetcher(url: url, headers: headers, totalBytes: total, fileURL: fileURL)
-        current = (id, fetcher)
-        AppDebugLog.write("[Bridge] 注册流#\(id): \(url.absoluteString.prefix(100)) total=\(total)（稀疏磁盘文件）")
+        streamsLock.lock()
+        streams[id] = fetcher
+        streamsLock.unlock()
+        let headerNames = headers.keys.joined(separator: ",")
+        AppDebugLog.write("[Bridge] 注册流#\(id): \(url.absoluteString.prefix(100)) total=\(total)（按需阻塞读取）")
         return id
     }
 
-    /// 预下载关键区（文件头+moov+起播窗口）；就绪返回本地文件路径供 mpv loadfile
-    func prepare(id: Int64, startAtSeconds: Double) async -> URL? {
-        lock.lock()
-        let fetcher = current?.fetcher
-        let matches = current?.id == id
-        lock.unlock()
-        guard matches, let fetcher else { return nil }
-        let ok = await fetcher.prepare(startAtSeconds: startAtSeconds)
-        guard ok else { return nil }
-        return await fetcher.fileURLValue
+    func localURL(for id: Int64) -> URL? {
+        guard let port else { return nil }
+        return URL(string: "http://127.0.0.1:\(port)/s/\(id)")
     }
 
     func unregister(_ id: Int64) {
-        lock.lock()
-        let entry = current
-        lock.unlock()
-        guard let entry, entry.id == id else { return }
-        AppDebugLog.write("[Bridge] 注销流#\(id)（清理临时文件）")
-        Task { await entry.fetcher.cancel() }
-        lock.lock()
-        current = nil
-        lock.unlock()
+        streamsLock.lock()
+        let stream = streams.removeValue(forKey: id)
+        streamsLock.unlock()
+        if let stream {
+            AppDebugLog.write("[Bridge] 注销流#\(id)（清理临时文件）")
+            Task { await stream.cancel() }
+        }
     }
 
     /// 下载速度（字节/秒），供网速显示
     func speed(for id: Int64) -> Double {
-        lock.lock(); defer { lock.unlock() }
-        guard current?.id == id else { return 0 }
-        return current?.fetcher.meter.speed() ?? 0
+        streamsLock.lock(); defer { streamsLock.unlock() }
+        return streams[id]?.meter.speed() ?? 0
     }
-}
 
-extension StreamFileFetcher {
-    var fileURLValue: URL? {
-        cancelled ? nil : fileURL
+    // MARK: 监听
+
+    private func ensureStarted() -> Bool {
+        if port != nil { return true }
+        let params = NWParameters.tcp
+        // 绑定 loopback：不触发 iOS 本地网络权限，也避免暴露端口到局域网
+        params.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: .any)
+        guard let listener = try? NWListener(using: params) else {
+            AppDebugLog.write("[Bridge] NWListener 创建失败")
+            return false
+        }
+        let ready = DispatchSemaphore(value: 0)
+        listener.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .ready:
+                self?.port = listener.port?.rawValue ?? 0
+                ready.signal()
+            case .failed(let error):
+                AppDebugLog.write("[Bridge] 监听失败: \(error)")
+                ready.signal()
+            default:
+                break
+            }
+        }
+        listener.newConnectionHandler = { [weak self] connection in
+            self?.handle(connection)
+        }
+        listener.start(queue: queue)
+        _ = ready.wait(timeout: .now() + 2)
+        guard let boundPort = port, boundPort > 0 else {
+            listener.cancel()
+            AppDebugLog.write("[Bridge] 本地监听启动失败，回退 mpv 直连")
+            return false
+        }
+        self.listener = listener
+        AppDebugLog.write("[Bridge] 已启动 127.0.0.1:\(boundPort)")
+        return true
+    }
+
+    // MARK: 连接处理
+
+    private final class RequestBox {
+        let connection: NWConnection
+        var buffer = Data()
+        var task: Task<Void, Never>?
+
+        init(connection: NWConnection) { self.connection = connection }
+    }
+
+    private func handle(_ connection: NWConnection) {
+        let box = RequestBox(connection: connection)
+        connection.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .ready:
+                self?.receiveHead(box)
+            case .failed, .cancelled:
+                box.task?.cancel()
+            default:
+                break
+            }
+        }
+        connection.start(queue: queue)
+    }
+
+    private func receiveHead(_ box: RequestBox) {
+        box.connection.receive(minimumIncompleteLength: 1, maximumLength: 16 * 1024) { [weak self] data, _, isComplete, error in
+            guard let self else { return }
+            if let data { box.buffer.append(data) }
+            if let text = String(data: box.buffer, encoding: .utf8),
+               let range = text.range(of: "\r\n\r\n") {
+                let head = String(text[..<range.lowerBound])
+                box.buffer.removeAll(keepingCapacity: false)
+                self.dispatch(box, head: head)
+            } else if error != nil || isComplete || box.buffer.count > 32 * 1024 {
+                box.connection.cancel()
+            } else {
+                self.receiveHead(box)
+            }
+        }
+    }
+
+    private func dispatch(_ box: RequestBox, head: String) {
+        var lines = head.components(separatedBy: "\r\n")
+        guard !lines.isEmpty else {
+            StreamFileFetcher.sendSimple(box.connection, status: "400 Bad Request")
+            return
+        }
+        let parts = lines.removeFirst().split(separator: " ")
+        guard parts.count >= 2 else {
+            StreamFileFetcher.sendSimple(box.connection, status: "400 Bad Request")
+            return
+        }
+        let path = String(parts[1])
+        guard path.hasPrefix("/s/"), let id = Int64(path.dropFirst(3)) else {
+            StreamFileFetcher.sendSimple(box.connection, status: "404 Not Found")
+            return
+        }
+        var start: Int64 = 0
+        var end: Int64?
+        for line in lines where line.lowercased().hasPrefix("range:") {
+            let value = line.dropFirst(6).trimmingCharacters(in: .whitespaces)
+            if value.lowercased().hasPrefix("bytes=") {
+                let comps = value.dropFirst(6).split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
+                if let first = comps.first, let parsed = Int64(first) { start = parsed }
+                if comps.count > 1, let parsed = Int64(comps[1]) { end = parsed }
+            }
+            break
+        }
+        streamsLock.lock()
+        let stream = streams[id]
+        streamsLock.unlock()
+        guard let stream else {
+            StreamFileFetcher.sendSimple(box.connection, status: "404 Not Found")
+            return
+        }
+        box.task = Task { await stream.serve(connection: box.connection, rawStart: start, rawEnd: end) }
     }
 }

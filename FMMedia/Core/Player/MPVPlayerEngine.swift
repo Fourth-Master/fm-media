@@ -157,7 +157,7 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
     var onError: ((String) -> Void)?
     var onSpeed: ((Double) -> Void)?
     var onRequireSoftwareRetry: (() -> Void)?
-    /// 正在预下载整个文件（磁盘-backed 全文件填充期间为 true）
+    /// 保留协议兼容；按需阻塞读取模式下无全文件预下载阶段，恒为 false
     private(set) var isPreparingDownload = false
 
     private let decodeMode: PlaybackDecodeMode
@@ -256,8 +256,9 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
         }
     }
 
-    /// 网络流加载：预检通过且服务器支持 Range 时走磁盘-backed 下载器，
-    /// mpv 直接 loadfile 本地稀疏文件（seek 全走磁盘）；否则 mpv 直连
+    /// 网络流加载：预检通过且服务器支持 Range 时走按需阻塞读取桥
+    /// （mpv 读请求未命中缓存时桥实时拉取并挂起响应，永不返回空洞数据）；
+    /// 否则 mpv 直连
     private func beginNetworkLoad(_ descriptor: StreamDescriptor, rate: Double, probe: ProbeResult?) async {
         guard handle != nil, !isShuttingDown else { return }
         var bridgedID: Int64?
@@ -265,22 +266,11 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
         if let probe, probe.supportsRange,
            let id = StreamBridge.shared.register(url: descriptor.url,
                                                  headers: descriptor.headers,
-                                                 totalBytes: probe.totalBytes) {
-            // 全文件预下载（20MB/s 下 6.8GB 约 5-6 分钟）：坏交错封装的文件
-            // demuxer 会按 moov 索引跳读到任意未下载位置，"边下边播"必然读到
-            // 稀疏零数据（音频 AAC 报错无声 / 视频 Invalid NAL 花屏），
-            // 唯一可靠方案是全文件落盘后纯本地播放
-            isPreparingDownload = true
+                                                 totalBytes: probe.totalBytes),
+           let localURL = StreamBridge.shared.localURL(for: id) {
             bridgedID = id
-            let startAt = pendingSeek > 0 ? pendingSeek : 0
-            if let fileURL = await StreamBridge.shared.prepare(id: id, startAtSeconds: startAt) {
-                target = fileURL.path
-                AppDebugLog.write("[MPV] 取流方式: 本地完整文件 #\(id)（全文件预下载完成）")
-            } else {
-                AppDebugLog.write("[MPV] 全文件预下载失败/取消，回退 mpv 直连")
-                StreamBridge.shared.unregister(id)
-            }
-            isPreparingDownload = false
+            target = localURL.absoluteString
+            AppDebugLog.write("[MPV] 取流方式: 按需阻塞读取桥 #\(id)")
         }
         bridgeStreamID = bridgedID
         if bridgedID == nil {
