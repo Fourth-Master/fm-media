@@ -81,7 +81,6 @@ actor StreamFileFetcher {
 
     func cancel() {
         cancelled = true
-        wakeAll()
         try? fileHandle?.close()
         fileHandle = nil
         try? FileManager.default.removeItem(at: fileURL)
@@ -236,7 +235,8 @@ actor StreamFileFetcher {
         let start = Int64(tailSeg) * Self.segmentSize
         let length = Int(totalBytes - start)
         handle.seek(toFileOffset: UInt64(start))
-        guard let data = handle.readData(ofLength: length) else { return nil }
+        let data = handle.readData(ofLength: length)
+        guard !data.isEmpty else { return nil }
         guard let marker = data.range(of: Data("mvhd".utf8)) else {
             AppDebugLog.write("[Bridge] moov 中未找到 mvhd")
             return nil
