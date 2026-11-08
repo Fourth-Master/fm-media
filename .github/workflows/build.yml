@@ -18,6 +18,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # 构建指纹：把 git 短 SHA 编译进 App，启动日志可见，防止"装错包"无从判断
+      - name: Stamp build id
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          cat > FMMedia/Core/BuildStamp.swift <<EOF
+          // CI 自动生成，勿手动编辑
+          enum BuildStamp {
+              static let gitSHA = "$SHA"
+          }
+          EOF
+          grep -n "gitSHA" FMMedia/Core/BuildStamp.swift
+
       - name: Read version
         run: |
           VERSION=$(grep -E 'MARKETING_VERSION' project.yml | head -1 | sed 's/.*"\(.*\)".*/\1/')

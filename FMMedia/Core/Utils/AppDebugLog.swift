@@ -44,7 +44,7 @@ enum AppDebugLog {
         // 关闭时也执行检查——App 启动应用设置即会清理旧版本遗留文件
         clearIfVersionChanged()
         if on {
-            write("=== 调试日志开启 === App v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?") · iOS \(UIDevice.current.systemVersion) · \(UIDevice.current.model)")
+            write("=== 调试日志开启 === App v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?") · build \(BuildStamp.gitSHA) · iOS \(UIDevice.current.systemVersion) · \(UIDevice.current.model)")
         }
     }
 
