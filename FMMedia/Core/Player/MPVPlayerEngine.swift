@@ -363,7 +363,9 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
     }
 
     func seek(to seconds: Double) {
-        command(["seek", String(format: "%.3f", max(0, seconds)), "absolute"])
+        // keyframes：demuxer 落到目标前的关键帧，从干净参考起点解码。
+        // 精确 seek 在坏交错封装上会落到非关键帧位置，解码器丢参考帧 → 花屏
+        command(["seek", String(format: "%.3f", max(0, seconds)), "absolute+keyframes"])
     }
 
     func makeView() -> UIView { containerView }
