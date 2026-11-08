@@ -644,9 +644,9 @@ private let streamCBSeek: @convention(c) (UnsafeMutableRawPointer?, Int64) -> In
         .seekSync(target)
 }
 
-private let streamCBSize: @convention(c) (UnsafeMutableRawPointer?) -> UInt64 = { cookie in
+private let streamCBSize: @convention(c) (UnsafeMutableRawPointer?) -> Int64 = { cookie in
     guard let cookie else { return 0 }
-    return UInt64(bitPattern: Unmanaged<StreamContext>.fromOpaque(cookie).takeUnretainedValue().fileSize)
+    return Unmanaged<StreamContext>.fromOpaque(cookie).takeUnretainedValue().fileSize
 }
 
 private let streamCBClose: @convention(c) (UnsafeMutableRawPointer?) -> Void = { cookie in
