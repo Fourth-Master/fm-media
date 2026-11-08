@@ -61,9 +61,7 @@ actor StreamFileFetcher {
     private var lastSpeedLogAt = Date().timeIntervalSinceReferenceDate
     private var connectionCount = 0
     /// 预取并发上限；按需读取（mpv 正在等的位置）不受此限，始终立即启动
-    private let maxPrefetchInflight = 2
-    /// 全局硬上限（含按需），防雪崩
-    private let maxHardInflight = 6
+    private let maxPrefetchInflight = 4
 
     private final class Reader {
         var servedSegment: Int
@@ -281,11 +279,15 @@ actor StreamFileFetcher {
         wake(idx)
     }
 
-    /// 轻量预取：每个读取位置向前补 2 段（受并发限制，仅平滑读取，不激进）
+    /// 位置预取：每个读取位置向前补 16 段（32MB）。
+    /// demuxer 在坏交错封装上会高频交替读取两个相距 66MB+ 的位置，
+    /// 每个位置有 32MB 缓冲才不会每 10-50KB 就跳区（每次跳区 = 关连接重开，
+    /// 高频跳区会触发服务器节流 → 段获取失败 → 泵中断 → 花屏）
     private func prefetchAround() {
         for reader in readers {
-            startFetch(reader.servedSegment + 1, onDemand: false)
-            startFetch(reader.servedSegment + 2, onDemand: false)
+            for ahead in 1...16 {
+                startFetch(reader.servedSegment + ahead, onDemand: false)
+            }
         }
     }
 

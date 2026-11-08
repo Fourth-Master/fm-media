@@ -46,11 +46,10 @@ struct RootView: View {
     private func autoScanIfNeeded() {
         guard settings.data.autoScanOnLaunch else { return }
         guard !database.sources.isEmpty else { return }
-        // 版本升级后强制重扫，保证标题/原名等新字段生效
-        let versionChanged = library.lastScanAppVersion != LibraryStore.currentAppVersion
-        if !versionChanged, let last = library.lastScan, Date().timeIntervalSince(last) < 300 { return }
+        // 增量扫描（非强制）：版本升级不再触发全量重扫
+        if let last = library.lastScan, Date().timeIntervalSince(last) < 300 { return }
         Task {
-            await library.scan(sources: database.sources, force: versionChanged)
+            await library.scan(sources: database.sources)
             settings.data.lastLibraryScan = Date()
         }
     }
