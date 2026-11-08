@@ -40,6 +40,8 @@ struct PlayerScreen: View {
     @State private var hud: PlayerHUD?
     @State private var isBoosting = false
     @State private var boostBaseRate: Double = 1.0
+    /// 长按倍速的武装定时器：按住 0.4s 后生效（快速点按不触发）
+    @State private var boostArmTask: Task<Void, Never>?
     @State private var showSubtitleSavePrompt = false
 
     init(request: PlaybackRequest) {
@@ -211,9 +213,23 @@ struct PlayerScreen: View {
         .onLongPressGesture(minimumDuration: 0.5,
                             maximumDistance: 14,
                             pressing: { pressing in
-                                if !pressing { endBoost() }
+                                // pressing=true 在手指按下时即触发（perform 要到松手才回调，
+                                // 直接挂 perform 会导致"松开才有倍速"）。
+                                // 按住 0.4s 后启动倍速：按住期间生效，松手立即恢复
+                                if pressing {
+                                    boostArmTask?.cancel()
+                                    boostArmTask = Task { @MainActor in
+                                        try? await Task.sleep(nanoseconds: 400_000_000)
+                                        guard !Task.isCancelled else { return }
+                                        startBoost()
+                                    }
+                                } else {
+                                    boostArmTask?.cancel()
+                                    boostArmTask = nil
+                                    endBoost()
+                                }
                             },
-                            perform: { startBoost() })
+                            perform: {})
         .background(
             GeometryReader { proxy in
                 Color.clear

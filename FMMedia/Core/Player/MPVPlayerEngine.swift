@@ -164,6 +164,8 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
     private var handle: OpaquePointer?
     private var renderContext: OpaquePointer?
     private var bridgeStreamID: Int64?
+    /// mpv 核心是否注册了 fm:// stream_cb 协议（决定网络流走 stream_cb 还是本地 HTTP 桥）
+    private var streamCBAttached = false
     private var eventLoopStarted = false
     private var eventLoopDone: DispatchSemaphore?
     private var isShuttingDown = false
@@ -256,9 +258,9 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
         }
     }
 
-    /// 网络流加载：预检通过且服务器支持 Range 时走按需阻塞读取桥
-    /// （mpv 读请求未命中缓存时桥实时拉取并挂起响应，永不返回空洞数据）；
-    /// 否则 mpv 直连
+    /// 网络流加载：预检通过且服务器支持 Range 时注册按需阻塞读取流，
+    /// 优先走 stream_cb 协议（fm://，读请求直接进 Swift），注册不可用时退回本地 HTTP 桥，
+    /// 都不行则 mpv 直连
     private func beginNetworkLoad(_ descriptor: StreamDescriptor, rate: Double, probe: ProbeResult?) async {
         guard handle != nil, !isShuttingDown else { return }
         var bridgedID: Int64?
@@ -266,11 +268,17 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
         if let probe, probe.supportsRange,
            let id = StreamBridge.shared.register(url: descriptor.url,
                                                  headers: descriptor.headers,
-                                                 totalBytes: probe.totalBytes),
-           let localURL = StreamBridge.shared.localURL(for: id) {
+                                                 totalBytes: probe.totalBytes) {
             bridgedID = id
-            target = localURL.absoluteString
-            AppDebugLog.write("[MPV] 取流方式: 按需阻塞读取桥 #\(id)")
+            if streamCBAttached {
+                target = "fm://\(id)"
+                AppDebugLog.write("[MPV] 取流方式: stream_cb 协议 #\(id)")
+            } else if let localURL = StreamBridge.shared.localURL(for: id) {
+                target = localURL.absoluteString
+                AppDebugLog.write("[MPV] 取流方式: 本地桥 #\(id)")
+            } else {
+                bridgedID = nil
+            }
         }
         bridgeStreamID = bridgedID
         if bridgedID == nil {
@@ -295,9 +303,11 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
                 setProperty("user-agent", Self.browserUserAgent)
             }
         }
-        // 磁盘-backed：数据在本地文件，mpv 端缓存收缩即可（省内存）
-        setProperty("demuxer-max-bytes", bridgedID != nil ? "8MiB" : "150MiB")
-        setProperty("demuxer-max-back-bytes", bridgedID != nil ? "8MiB" : "100MiB")
+        // 磁盘-backed：数据在本地，mpv 端内存缓存适度放宽；
+        // stream_cb 模式读请求开销极低，更大的 demuxer 读限可吸收服务器抖动
+        let isStreamCB = target.hasPrefix("fm://")
+        setProperty("demuxer-max-bytes", isStreamCB ? "48MiB" : (bridgedID != nil ? "8MiB" : "150MiB"))
+        setProperty("demuxer-max-back-bytes", isStreamCB ? "24MiB" : (bridgedID != nil ? "8MiB" : "100MiB"))
         setProperty("pause", "no")
         setProperty("speed", String(format: "%.2f", rate))
         AppDebugLog.write("[MPV] load: isFileURL=" + String(descriptor.url.isFileURL))
@@ -607,6 +617,11 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
         setOption(ctx, "cscale", "spline36")
         setOption(ctx, "dscale", "mitchell")
         setOption(ctx, "dither-depth", "auto")
+
+        // stream_cb 自定义协议（必须在 initialize 之前注册）：注册成功后网络流
+        // 读请求直接进入 Swift，不经过本地 TCP/HTTP——逐帧 seek 风暴下 NWConnection
+        // 发送误报失败 → 提前 EOF → 花屏的问题从传输层根除
+        streamCBAttached = StreamBridge.attachStreamCB(to: ctx)
 
         let initResult = mpv_initialize(ctx)
         AppDebugLog.write("[MPV] mpv_initialize result: \(initResult)")

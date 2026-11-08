@@ -1,5 +1,8 @@
 import Foundation
 import Network
+#if canImport(Libmpv)
+import Libmpv
+#endif
 
 // MARK: - 桥接速度计（线程安全）
 
@@ -63,7 +66,8 @@ actor StreamFileFetcher {
     /// 预取并发上限；按需读取（mpv 正在等的位置）不受此限，始终立即启动
     private let maxPrefetchInflight = 4
 
-    private final class Reader {
+    /// 读取位置追踪（驱动 prefetchAround）；stream_cb 与 HTTP 泵共用
+    final class Reader {
         var servedSegment: Int
         init(servedSegment: Int) { self.servedSegment = servedSegment }
     }
@@ -204,6 +208,25 @@ actor StreamFileFetcher {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             waiters[idx, default: []].append(continuation)
         }
+    }
+
+    // MARK: stream_cb 读取入口
+
+    /// 为一个 stream_cb 打开的流实例注册预取追踪 reader（open 回调时调用一次）
+    func makeReader(at segment: Int) -> Reader {
+        let reader = Reader(servedSegment: segment)
+        readers.append(reader)
+        return reader
+    }
+
+    /// stream_cb 流关闭时注销 reader
+    func dropReader(_ reader: Reader) {
+        readers.removeAll { $0 === reader }
+    }
+
+    /// stream_cb 读取：与 HTTP 泵同一套按需阻塞读取（段未就绪实时拉取，永不返回空洞）
+    func readSliceForCB(_ reader: Reader, at offset: Int64, maxLength: Int) async -> Data? {
+        await readSlice(reader, at: offset, maxLength: maxLength)
     }
 
     // MARK: 段获取
@@ -399,6 +422,12 @@ final class StreamBridge {
         return streams[id]?.meter.speed() ?? 0
     }
 
+    /// stream_cb open 回调按 ID 查找流
+    func fetcher(for id: Int64) -> StreamFileFetcher? {
+        streamsLock.lock(); defer { streamsLock.unlock() }
+        return streams[id]
+    }
+
     // MARK: 监听
 
     private func ensureStarted() -> Bool {
@@ -517,3 +546,157 @@ final class StreamBridge {
         box.task = Task { await stream.serve(connection: box.connection, rawStart: start, rawEnd: end) }
     }
 }
+
+// MARK: - mpv stream_cb 自定义协议（fm://）
+
+/// mpv stream_cb 打开的流实例（cookie）。
+/// read/seek 回调在 mpv 线程同步调用：信号量挂起等待 actor 完成按需拉取。
+/// 用 stream_cb 取代本地 HTTP 泵的原因：坏交错封装让 demuxer 逐帧 avio seek，
+/// HTTP 模式下每个 seek = 关连接重开（实测 ~120 连接/秒），NWConnection 发送
+/// 完成回调在这种风暴下误报失败 → 提前 EOF → ffmpeg 重连丢参考帧 → 花屏。
+/// stream_cb 下 seek 只是函数调用，NWConnection 整个从播放路径消失。
+final class StreamContext: @unchecked Sendable {
+    private let fetcher: StreamFileFetcher
+    private let size: Int64
+    private let reader: StreamFileFetcher.Reader
+    private let lock = NSLock()
+    private var offset: Int64 = 0
+
+    init(fetcher: StreamFileFetcher, size: Int64, reader: StreamFileFetcher.Reader) {
+        self.fetcher = fetcher
+        self.size = size
+        self.reader = reader
+    }
+
+    /// 返回读取字节数；0 = EOF；<0 = IO 错误
+    func readSync(buf: UnsafeMutableRawPointer?, maxBytes: Int) -> Int64 {
+        guard let buf, maxBytes > 0 else { return 0 }
+        lock.lock()
+        let at = offset
+        lock.unlock()
+        guard at < size else { return 0 }
+        // 单次最多 1MB：mpv 的 stream buffer 可能很大，避免每次回调分配整块内存
+        let want = min(maxBytes, 1024 * 1024)
+
+        // 按需阻塞读取：段未就绪时实时拉取并挂起 mpv 线程（宁可停顿，不返回坏数据）
+        let semaphore = DispatchSemaphore(value: 0)
+        let box = ResultBox()
+        let fetcher = self.fetcher
+        let reader = self.reader
+        Task {
+            var data: Data?
+            var attempts = 0
+            // 段获取瞬时失败时短暂重试（段内部已有 3 次重试 × 2 轮重置）；宁可停顿不报错
+            while attempts < 5 {
+                attempts += 1
+                data = await fetcher.readSliceForCB(reader, at: at, maxLength: want)
+                if data != nil { break }
+                if Task.isCancelled { break }
+                try? await Task.sleep(nanoseconds: 400_000_000)
+            }
+            box.data = data
+            semaphore.signal()
+        }
+        semaphore.wait()
+        guard let data = box.data, !data.isEmpty else { return -1 }
+        lock.lock()
+        defer { lock.unlock() }
+        data.withUnsafeBytes { raw in
+            if let base = raw.baseAddress { memcpy(buf, base, min(data.count, maxBytes)) }
+        }
+        offset = at + Int64(data.count)
+        return Int64(data.count)
+    }
+
+    /// seek 到绝对偏移，返回实际生效的偏移（<0 = 失败）
+    func seekSync(_ target: Int64) -> Int64 {
+        let applied = max(0, min(target, size))
+        lock.lock()
+        offset = applied
+        lock.unlock()
+        return applied
+    }
+
+    var fileSize: Int64 { size }
+
+    func closeSync() {
+        let fetcher = self.fetcher
+        let reader = self.reader
+        Task { await fetcher.dropReader(reader) }
+    }
+
+    private final class ResultBox { var data: Data? }
+}
+
+private final class StreamCBOpenBox { var context: StreamContext? }
+
+#if canImport(Libmpv)
+// stream_cb 回调（C 函数指针，无捕获；cookie = open 时 passRetained 的 StreamContext）
+private let streamCBRead: @convention(c) (UnsafeMutableRawPointer?, UnsafeMutablePointer<CChar>?, UInt64) -> Int64 = { cookie, buf, nbytes in
+    guard let cookie, let buf, nbytes > 0, nbytes <= UInt64(Int.max) else { return 0 }
+    return Unmanaged<StreamContext>.fromOpaque(cookie).takeUnretainedValue()
+        .readSync(buf: buf, maxBytes: Int(nbytes))
+}
+
+private let streamCBSeek: @convention(c) (UnsafeMutableRawPointer?, UInt64) -> Int64 = { cookie, target in
+    guard let cookie else { return -1 }
+    return Unmanaged<StreamContext>.fromOpaque(cookie).takeUnretainedValue()
+        .seekSync(Int64(bitPattern: target))
+}
+
+private let streamCBSize: @convention(c) (UnsafeMutableRawPointer?) -> UInt64 = { cookie in
+    guard let cookie else { return 0 }
+    return UInt64(bitPattern: UInt64(Unmanaged<StreamContext>.fromOpaque(cookie).takeUnretainedValue().fileSize))
+}
+
+private let streamCBClose: @convention(c) (UnsafeMutableRawPointer?) -> Void = { cookie in
+    guard let cookie else { return }
+    let ctx = Unmanaged<StreamContext>.fromOpaque(cookie).takeUnretainedValue()
+    ctx.closeSync()
+    Unmanaged.passUnretained(ctx).release()
+}
+
+private let streamCBOpen: @convention(c) (UnsafeMutableRawPointer?, UnsafeMutablePointer<CChar>?, UnsafeMutablePointer<mpv_stream_cb_info>?) -> Int32 = { userData, uri, info in
+    let failed = Int32(-13)   // MPV_ERROR_LOADING_FAILED
+    guard let info else { return failed }
+    let uriText = uri.map { String(cString: $0) } ?? ""
+    guard uriText.hasPrefix("fm://"), let id = Int64(uriText.dropFirst(5)) else {
+        AppDebugLog.write("[Bridge] stream_cb open 无法解析: \(uriText)")
+        return failed
+    }
+    guard let bridge = userData.map({ Unmanaged<StreamBridge>.fromOpaque($0).takeUnretainedValue() }),
+          let fetcher = bridge.fetcher(for: id) else {
+        AppDebugLog.write("[Bridge] stream_cb open 未找到流#\(id)")
+        return failed
+    }
+    // reader 注册需 actor 隔离：信号量等待（每流仅 open 一次）
+    let semaphore = DispatchSemaphore(value: 0)
+    let box = StreamCBOpenBox()
+    Task {
+        let reader = await fetcher.makeReader(at: 0)
+        box.context = StreamContext(fetcher: fetcher, size: fetcher.totalBytes, reader: reader)
+        semaphore.signal()
+    }
+    semaphore.wait()
+    guard let ctx = box.context else { return failed }
+    AppDebugLog.write("[Bridge] stream_cb 打开流#\(id)")
+    info.pointee.cookie = Unmanaged.passRetained(ctx).toOpaque()
+    info.pointee.read_fn = streamCBRead
+    info.pointee.seek_fn = streamCBSeek
+    info.pointee.close_fn = streamCBClose
+    info.pointee.size_fn = streamCBSize
+    return 0
+}
+
+extension StreamBridge {
+    /// 在 mpv_initialize 之前注册 fm:// 只读协议；成功后 mpv 读请求直接进入 Swift，
+    /// 不再经过本地 TCP/HTTP
+    static func attachStreamCB(to ctx: OpaquePointer) -> Bool {
+        let result = mpv_stream_cb_add_ro(ctx, "fm",
+                                          Unmanaged.passUnretained(StreamBridge.shared).toOpaque(),
+                                          streamCBOpen)
+        AppDebugLog.write("[Bridge] stream_cb 协议注册: code=\(result)")
+        return result >= 0
+    }
+}
+#endif
