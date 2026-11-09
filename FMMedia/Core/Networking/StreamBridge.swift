@@ -98,6 +98,9 @@ actor StreamFileFetcher {
         cancelled = true
         for task in inflightTasks.values { task.cancel() }
         inflightTasks.removeAll()
+        // 断开预取来源：stream_cb 模式下 reader 要等 mpv close 才注销，
+        // 不先清空的话 fetchSegment 的 defer→prefetchAround 会无限自续 spawn 任务
+        readers.removeAll()
         wakeAll()
         try? fileHandle?.close()
         fileHandle = nil
@@ -205,6 +208,9 @@ actor StreamFileFetcher {
     }
 
     private func waitForSegment(_ idx: Int) async {
+        // cancel 已发生时直接返回：否则注册的 continuation 无人 resume，
+        // readSync 的信号量等待会永久挂起 mpv 线程 → 看门狗杀进程
+        guard !cancelled else { return }
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             waiters[idx, default: []].append(continuation)
         }
@@ -233,6 +239,7 @@ actor StreamFileFetcher {
 
     /// 启动一段拉取（onDemand = mpv 正在等待的位置，绕过预取并发限制立即启动）
     private func startFetch(_ idx: Int, onDemand: Bool) {
+        guard !cancelled else { return }
         if let seg = segments[idx], seg.done || seg.errorMessage != nil { return }
         if inflight.contains(idx) { return }
         if !onDemand, inflight.count >= maxPrefetchInflight { return }
@@ -307,6 +314,7 @@ actor StreamFileFetcher {
     /// 每个位置有 32MB 缓冲才不会每 10-50KB 就跳区（每次跳区 = 关连接重开，
     /// 高频跳区会触发服务器节流 → 段获取失败 → 泵中断 → 花屏）
     private func prefetchAround() {
+        guard !cancelled else { return }
         for reader in readers {
             for ahead in 1...16 {
                 startFetch(reader.servedSegment + ahead, onDemand: false)
