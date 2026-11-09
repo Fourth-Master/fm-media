@@ -762,8 +762,8 @@ private let streamCBOpen: @convention(c) (UnsafeMutableRawPointer?, UnsafeMutabl
         return failed
     }
     AppDebugLog.write("[Bridge] stream_cb 打开流#\(id)")
-    // Int64 → UInt64 → UInt → 指针位模式（64 位平台同宽无损）
-    info.pointee.cookie = UnsafeMutableRawPointer(bitPattern: UInt(bitPattern: UInt64(bitPattern: id)))
+    // 流 ID（恒为正小整数）→ 指针位模式；反解码见 streamID(fromCookie:)
+    info.pointee.cookie = UnsafeMutableRawPointer(bitPattern: Int(id))
     info.pointee.read_fn = streamCBRead
     info.pointee.seek_fn = streamCBSeek
     info.pointee.close_fn = streamCBClose
