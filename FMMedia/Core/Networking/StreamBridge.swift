@@ -718,31 +718,33 @@ final class StreamContext: @unchecked Sendable {
 private final class StreamCBOpenBox { var context: StreamContext? }
 
 #if canImport(Libmpv)
-// stream_cb 回调（C 函数指针，无捕获；cookie 只存流 ID 的 Int64 位模式）
+// cookie 只存流 ID：UnsafeMutableRawPointer ←→ Int64 位模式互换（64 位平台同宽无损）
+private func streamID(fromCookie cookie: UnsafeMutableRawPointer) -> Int64 {
+    Int64(bitPattern: UInt64(UInt(bitPattern: cookie)))
+}
+
+// stream_cb 回调（C 函数指针，无捕获）
 private let streamCBRead: @convention(c) (UnsafeMutableRawPointer?, UnsafeMutablePointer<CChar>?, UInt64) -> Int64 = { cookie, buf, nbytes in
     guard let cookie, let buf, nbytes > 0, nbytes <= UInt64(Int.max) else { return 0 }
-    let id = Int64(bitPattern: UInt(bitPattern: cookie))
+    let id = streamID(fromCookie: cookie)
     guard let ctx = StreamBridge.shared.streamContext(for: id) else { return -1 }
     return ctx.readSync(buf: buf, maxBytes: Int(nbytes))
 }
 
 private let streamCBSeek: @convention(c) (UnsafeMutableRawPointer?, Int64) -> Int64 = { cookie, target in
     guard let cookie else { return -1 }
-    let id = Int64(bitPattern: UInt(bitPattern: cookie))
-    guard let ctx = StreamBridge.shared.streamContext(for: id) else { return -1 }
+    guard let ctx = StreamBridge.shared.streamContext(for: streamID(fromCookie: cookie)) else { return -1 }
     return ctx.seekSync(target)
 }
 
 private let streamCBSize: @convention(c) (UnsafeMutableRawPointer?) -> Int64 = { cookie in
     guard let cookie else { return 0 }
-    let id = Int64(bitPattern: UInt(bitPattern: cookie))
-    return StreamBridge.shared.streamContext(for: id)?.fileSize ?? 0
+    return StreamBridge.shared.streamContext(for: streamID(fromCookie: cookie))?.fileSize ?? 0
 }
 
 private let streamCBClose: @convention(c) (UnsafeMutableRawPointer?) -> Void = { cookie in
     guard let cookie else { return }
-    let id = Int64(bitPattern: UInt(bitPattern: cookie))
-    StreamBridge.shared.closeStreamContext(id)
+    StreamBridge.shared.closeStreamContext(streamID(fromCookie: cookie))
 }
 
 private let streamCBOpen: @convention(c) (UnsafeMutableRawPointer?, UnsafeMutablePointer<CChar>?, UnsafeMutablePointer<mpv_stream_cb_info>?) -> Int32 = { userData, uri, info in
@@ -760,7 +762,8 @@ private let streamCBOpen: @convention(c) (UnsafeMutableRawPointer?, UnsafeMutabl
         return failed
     }
     AppDebugLog.write("[Bridge] stream_cb 打开流#\(id)")
-    info.pointee.cookie = UnsafeMutableRawPointer(bitPattern: Int(bitPattern: Int64(id)))
+    // Int64 → UInt64 → UInt → 指针位模式（64 位平台同宽无损）
+    info.pointee.cookie = UnsafeMutableRawPointer(bitPattern: UInt(bitPattern: UInt64(bitPattern: id)))
     info.pointee.read_fn = streamCBRead
     info.pointee.seek_fn = streamCBSeek
     info.pointee.close_fn = streamCBClose
