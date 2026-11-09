@@ -418,6 +418,12 @@ final class StreamBridge {
         streamsLock.lock()
         let stream = streams.removeValue(forKey: id)
         streamsLock.unlock()
+        contextLock.lock()
+        let ctx = streamContexts.removeValue(forKey: id)
+        contextLock.unlock()
+        // 先关上下文（排空在途读），再取消 actor——mpv terminate 等待 close 回调
+        // 完成后才退出，此顺序保证阻塞中的 read 有路可醒
+        ctx?.closeSync()
         if let stream {
             AppDebugLog.write("[Bridge] 注销流#\(id)（清理临时文件）")
             Task { await stream.cancel() }
@@ -434,6 +440,49 @@ final class StreamBridge {
     func fetcher(for id: Int64) -> StreamFileFetcher? {
         streamsLock.lock(); defer { streamsLock.unlock() }
         return streams[id]
+    }
+
+    // MARK: stream_cb 上下文注册表
+    // cookie 只存流 ID，StreamContext 存注册表持强引用：
+    // mpv terminate 与阻塞中 read 回调的竞态下对象不会被提前释放（闪退根因）
+
+    private let contextLock = NSLock()
+    private var streamContexts: [Int64: StreamContext] = [:]
+
+    /// open 回调：为流#id 创建上下文；流已注销返回 nil
+    func makeStreamContext(id: Int64) -> StreamContext? {
+        streamsLock.lock()
+        let fetcher = streams[id]
+        streamsLock.unlock()
+        guard let fetcher else { return nil }
+        let semaphore = DispatchSemaphore(value: 0)
+        let box = StreamCBOpenBox()
+        Task {
+            let reader = await fetcher.makeReader(at: 0)
+            box.context = StreamContext(bridge: self, streamID: id,
+                                        size: fetcher.totalBytes, reader: reader)
+            semaphore.signal()
+        }
+        semaphore.wait()
+        guard let ctx = box.context else { return nil }
+        contextLock.lock()
+        streamContexts[id] = ctx
+        contextLock.unlock()
+        return ctx
+    }
+
+    /// read/seek/size 回调查找（拿强引用，保证回调期间对象存活）
+    func streamContext(for id: Int64) -> StreamContext? {
+        contextLock.lock(); defer { contextLock.unlock() }
+        return streamContexts[id]
+    }
+
+    /// close 回调：从注册表移除并排空在途读，此后对象才释放
+    func closeStreamContext(_ id: Int64) {
+        contextLock.lock()
+        let ctx = streamContexts.removeValue(forKey: id)
+        contextLock.unlock()
+        ctx?.closeSync()
     }
 
     // MARK: 监听
@@ -557,21 +606,25 @@ final class StreamBridge {
 
 // MARK: - mpv stream_cb 自定义协议（fm://）
 
-/// mpv stream_cb 打开的流实例（cookie）。
-/// read/seek 回调在 mpv 线程同步调用：信号量挂起等待 actor 完成按需拉取。
-/// 用 stream_cb 取代本地 HTTP 泵的原因：坏交错封装让 demuxer 逐帧 avio seek，
-/// HTTP 模式下每个 seek = 关连接重开（实测 ~120 连接/秒），NWConnection 发送
-/// 完成回调在这种风暴下误报失败 → 提前 EOF → ffmpeg 重连丢参考帧 → 花屏。
-/// stream_cb 下 seek 只是函数调用，NWConnection 整个从播放路径消失。
+/// stream_cb 打开的流实例。cookie 不携带对象指针——只放流 ID，
+/// 回调按 ID 到 StreamBridge 注册表查强引用：mpv terminate 时
+/// 解复用线程可能仍阻塞在 read 的信号量等待里，对象指针会被
+/// close 回调释放造成 use-after-free（1.8.68/69 滑动快进闪退根因）；
+/// ID 查表 + close 前排空在途读彻底消除该竞态。
 final class StreamContext: @unchecked Sendable {
-    private let fetcher: StreamFileFetcher
+    private let bridge: StreamBridge
+    let streamID: Int64
     private let size: Int64
     private let reader: StreamFileFetcher.Reader
     private let lock = NSLock()
     private var offset: Int64 = 0
+    /// 在途读计数：close 必须等其归零（mpv 线程仍阻塞在 read 信号量上时）
+    private var inflightReads = 0
+    private var closed = false
 
-    init(fetcher: StreamFileFetcher, size: Int64, reader: StreamFileFetcher.Reader) {
-        self.fetcher = fetcher
+    init(bridge: StreamBridge, streamID: Int64, size: Int64, reader: StreamFileFetcher.Reader) {
+        self.bridge = bridge
+        self.streamID = streamID
         self.size = size
         self.reader = reader
     }
@@ -580,23 +633,36 @@ final class StreamContext: @unchecked Sendable {
     func readSync(buf: UnsafeMutableRawPointer?, maxBytes: Int) -> Int64 {
         guard let buf, maxBytes > 0 else { return 0 }
         lock.lock()
+        if closed {
+            lock.unlock()
+            return -1
+        }
         let at = offset
+        inflightReads += 1
         lock.unlock()
+        defer {
+            lock.lock()
+            inflightReads -= 1
+            lock.unlock()
+        }
         guard at < size else { return 0 }
         // 单次最多 1MB：mpv 的 stream buffer 可能很大，避免每次回调分配整块内存
         let want = min(maxBytes, 1024 * 1024)
 
-        // 按需阻塞读取：段未就绪时实时拉取并挂起 mpv 线程（宁可停顿，不返回坏数据）
+        // 按需阻塞读取：段未就绪时实时拉取并挂起 mpv 线程（宁可停顿，不返回坏数据）。
+        // 重试窗口 2s：瞬时报错（429/超时）靠段内 3 次重试 × 2 轮重置吸收，
+        // 这里只兜底即时失败；teardown 等待排空最多也只耗 2s
         let semaphore = DispatchSemaphore(value: 0)
         let box = ResultBox()
-        let fetcher = self.fetcher
+        let bridge = self.bridge
+        let id = self.streamID
         let reader = self.reader
         Task {
             var data: Data?
             var attempts = 0
-            // 段获取瞬时失败时短暂重试（段内部已有 3 次重试 × 2 轮重置）；宁可停顿不报错
             while attempts < 5 {
                 attempts += 1
+                guard let fetcher = bridge.fetcher(for: id) else { break }   // 已注销
                 data = await fetcher.readSliceForCB(reader, at: at, maxLength: want)
                 if data != nil { break }
                 if Task.isCancelled { break }
@@ -627,10 +693,23 @@ final class StreamContext: @unchecked Sendable {
 
     var fileSize: Int64 { size }
 
+    /// close 回调：注销 reader 并排空在途读（mpv 线程可能仍阻塞在 read 的
+    /// 信号量等待里），排空后才允许释放——杜绝 use-after-free
     func closeSync() {
-        let fetcher = self.fetcher
+        lock.lock()
+        closed = true
+        lock.unlock()
+        let bridge = self.bridge
         let reader = self.reader
-        Task { await fetcher.dropReader(reader) }
+        Task { await bridge.fetcher(for: streamID)?.dropReader(reader) }
+        // 在途读持有的是本对象引用（非 cookie 指针），等待其醒来即可安全释放
+        for _ in 0..<80 {
+            lock.lock()
+            let remaining = inflightReads
+            lock.unlock()
+            if remaining == 0 { break }
+            usleep(50_000)   // 50ms × 80 = 最多 4s
+        }
     }
 
     private final class ResultBox { var data: Data? }
@@ -639,29 +718,31 @@ final class StreamContext: @unchecked Sendable {
 private final class StreamCBOpenBox { var context: StreamContext? }
 
 #if canImport(Libmpv)
-// stream_cb 回调（C 函数指针，无捕获；cookie = open 时 passRetained 的 StreamContext）
+// stream_cb 回调（C 函数指针，无捕获；cookie 只存流 ID 的 Int64 位模式）
 private let streamCBRead: @convention(c) (UnsafeMutableRawPointer?, UnsafeMutablePointer<CChar>?, UInt64) -> Int64 = { cookie, buf, nbytes in
     guard let cookie, let buf, nbytes > 0, nbytes <= UInt64(Int.max) else { return 0 }
-    return Unmanaged<StreamContext>.fromOpaque(cookie).takeUnretainedValue()
-        .readSync(buf: buf, maxBytes: Int(nbytes))
+    let id = Int64(bitPattern: UInt(bitPattern: cookie))
+    guard let ctx = StreamBridge.shared.streamContext(for: id) else { return -1 }
+    return ctx.readSync(buf: buf, maxBytes: Int(nbytes))
 }
 
 private let streamCBSeek: @convention(c) (UnsafeMutableRawPointer?, Int64) -> Int64 = { cookie, target in
     guard let cookie else { return -1 }
-    return Unmanaged<StreamContext>.fromOpaque(cookie).takeUnretainedValue()
-        .seekSync(target)
+    let id = Int64(bitPattern: UInt(bitPattern: cookie))
+    guard let ctx = StreamBridge.shared.streamContext(for: id) else { return -1 }
+    return ctx.seekSync(target)
 }
 
 private let streamCBSize: @convention(c) (UnsafeMutableRawPointer?) -> Int64 = { cookie in
     guard let cookie else { return 0 }
-    return Unmanaged<StreamContext>.fromOpaque(cookie).takeUnretainedValue().fileSize
+    let id = Int64(bitPattern: UInt(bitPattern: cookie))
+    return StreamBridge.shared.streamContext(for: id)?.fileSize ?? 0
 }
 
 private let streamCBClose: @convention(c) (UnsafeMutableRawPointer?) -> Void = { cookie in
     guard let cookie else { return }
-    let ctx = Unmanaged<StreamContext>.fromOpaque(cookie).takeUnretainedValue()
-    ctx.closeSync()
-    Unmanaged.passUnretained(ctx).release()
+    let id = Int64(bitPattern: UInt(bitPattern: cookie))
+    StreamBridge.shared.closeStreamContext(id)
 }
 
 private let streamCBOpen: @convention(c) (UnsafeMutableRawPointer?, UnsafeMutablePointer<CChar>?, UnsafeMutablePointer<mpv_stream_cb_info>?) -> Int32 = { userData, uri, info in
@@ -672,23 +753,14 @@ private let streamCBOpen: @convention(c) (UnsafeMutableRawPointer?, UnsafeMutabl
         AppDebugLog.write("[Bridge] stream_cb open 无法解析: \(uriText)")
         return failed
     }
-    guard let bridge = userData.map({ Unmanaged<StreamBridge>.fromOpaque($0).takeUnretainedValue() }),
-          let fetcher = bridge.fetcher(for: id) else {
+    // cookie 只存流 ID；StreamContext 存入注册表持有强引用，
+    // close 回调从注册表移除并排空在途读后释放
+    guard let ctx = StreamBridge.shared.makeStreamContext(id: id) else {
         AppDebugLog.write("[Bridge] stream_cb open 未找到流#\(id)")
         return failed
     }
-    // reader 注册需 actor 隔离：信号量等待（每流仅 open 一次）
-    let semaphore = DispatchSemaphore(value: 0)
-    let box = StreamCBOpenBox()
-    Task {
-        let reader = await fetcher.makeReader(at: 0)
-        box.context = StreamContext(fetcher: fetcher, size: fetcher.totalBytes, reader: reader)
-        semaphore.signal()
-    }
-    semaphore.wait()
-    guard let ctx = box.context else { return failed }
     AppDebugLog.write("[Bridge] stream_cb 打开流#\(id)")
-    info.pointee.cookie = Unmanaged.passRetained(ctx).toOpaque()
+    info.pointee.cookie = UnsafeMutableRawPointer(bitPattern: Int(bitPattern: Int64(id)))
     info.pointee.read_fn = streamCBRead
     info.pointee.seek_fn = streamCBSeek
     info.pointee.close_fn = streamCBClose
