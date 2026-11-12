@@ -810,7 +810,7 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
                 }
                 renderContext = context
                 mpv_render_context_set_update_callback(context, mpvRenderUpdate,
-                                                       Unmanaged.passUnretained(renderProxy()).toOpaque())
+                                                       Unmanaged.passUnretained(renderProxy).toOpaque())
             }
         }
     }
@@ -838,7 +838,7 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
             }
             renderContext = context
             mpv_render_context_set_update_callback(context, mpvRenderUpdate,
-                                                   Unmanaged.passUnretained(renderProxy()).toOpaque())
+                                                   Unmanaged.passUnretained(renderProxy).toOpaque())
         }
     }
 
