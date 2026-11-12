@@ -82,10 +82,29 @@ private let mpvGetProcAddress: @convention(c) (UnsafeMutableRawPointer?, UnsafeP
     return dlsym(UnsafeMutableRawPointer(bitPattern: -2), name)
 }
 
+/// 渲染回调代理：C 回调只能携带裸指针，此前直接传 engine（passUnretained），
+/// 回调排队的 Task 可能在引擎释放后才执行 → 悬空指针访问
+/// （快速拖动进度触发引擎重建时偶发闪退）。代理持弱引用并静态保活
+/// （每引擎一个极小对象），悬空访问退化为 weak nil 安全跳过。
+private final class MPVRenderProxy: @unchecked Sendable {
+    private static let lock = NSLock()
+    private static var instances: [MPVRenderProxy] = []
+    static func make(for engine: MPVPlayerEngine) -> MPVRenderProxy {
+        let proxy = MPVRenderProxy(engine: engine)
+        lock.lock()
+        instances.append(proxy)
+        lock.unlock()
+        return proxy
+    }
+    weak var engine: MPVPlayerEngine?
+    private init(engine: MPVPlayerEngine) { self.engine = engine }
+}
+
 private let mpvRenderUpdate: @convention(c) (UnsafeMutableRawPointer?) -> Void = { context in
     guard let context else { return }
+    let proxy = Unmanaged<MPVRenderProxy>.fromOpaque(context).takeUnretainedValue()
     Task { @MainActor in
-        Unmanaged<MPVPlayerEngine>.fromOpaque(context).takeUnretainedValue().renderIfNeeded()
+        proxy.engine?.renderIfNeeded()
     }
 }
 
@@ -191,6 +210,8 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
     private var swPixelSize = CGSize.zero
     private var swFallbackTask: Task<Void, Never>?
     private var aspectBuffer: UnsafeMutablePointer<CChar>?
+    /// 渲染回调代理（静态保活，见 MPVRenderProxy 注释）
+    private lazy var renderProxy = MPVRenderProxy.make(for: self)
 
     private var pendingSeek: Double = 0
     private var lastKnownTime: Double = 0
@@ -789,7 +810,7 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
                 }
                 renderContext = context
                 mpv_render_context_set_update_callback(context, mpvRenderUpdate,
-                                                       Unmanaged.passUnretained(self).toOpaque())
+                                                       Unmanaged.passUnretained(renderProxy()).toOpaque())
             }
         }
     }
@@ -817,7 +838,7 @@ final class MPVPlayerEngine: NSObject, PlaybackEngine {
             }
             renderContext = context
             mpv_render_context_set_update_callback(context, mpvRenderUpdate,
-                                                   Unmanaged.passUnretained(self).toOpaque())
+                                                   Unmanaged.passUnretained(renderProxy()).toOpaque())
         }
     }
 

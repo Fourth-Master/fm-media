@@ -40,8 +40,6 @@ struct PlayerScreen: View {
     @State private var hud: PlayerHUD?
     @State private var isBoosting = false
     @State private var boostBaseRate: Double = 1.0
-    /// 长按倍速的武装定时器：按住 0.4s 后生效（快速点按不触发）
-    @State private var boostArmTask: Task<Void, Never>?
     @State private var showSubtitleSavePrompt = false
 
     init(request: PlaybackRequest) {
@@ -210,26 +208,7 @@ struct PlayerScreen: View {
                 .onTapGesture { toggleControls() }
         }
         .simultaneousGesture(seekAndLevelsGesture)
-        .onLongPressGesture(minimumDuration: 0.5,
-                            maximumDistance: 14,
-                            pressing: { pressing in
-                                // pressing=true 在手指按下时即触发（perform 要到松手才回调，
-                                // 直接挂 perform 会导致"松开才有倍速"）。
-                                // 按住 0.4s 后启动倍速：按住期间生效，松手立即恢复
-                                if pressing {
-                                    boostArmTask?.cancel()
-                                    boostArmTask = Task { @MainActor in
-                                        try? await Task.sleep(nanoseconds: 400_000_000)
-                                        guard !Task.isCancelled else { return }
-                                        startBoost()
-                                    }
-                                } else {
-                                    boostArmTask?.cancel()
-                                    boostArmTask = nil
-                                    endBoost()
-                                }
-                            },
-                            perform: {})
+        .simultaneousGesture(boostGesture)
         .background(
             GeometryReader { proxy in
                 Color.clear
@@ -239,9 +218,37 @@ struct PlayerScreen: View {
         )
     }
 
+    /// 长按倍速：按住 0.4s 进入倍速（按住期间生效），上下滑动以 0.1 步进
+    /// 增减倍速（上滑加速/下滑减速，每 36pt 一档），松手恢复原速。
+    /// 长按成功前移动手指仍走 seekAndLevelsGesture（seek/亮度/音量互不干扰）
+    private var boostGesture: some Gesture {
+        LongPressGesture(minimumDuration: 0.4, maximumDistance: 25)
+            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .local))
+            .onChanged { value in
+                switch value {
+                case .second(true, let drag):
+                    if !isBoosting { startBoost() }
+                    guard let drag else { return }
+                    let steps = Int(((-drag.translation.height) / 36.0).rounded())
+                    let rate = min(max(settings.data.longPressRate + Double(steps) * 0.1, 0.5), 4.0)
+                    if abs(rate - vm.playbackRate) > 0.001 {
+                        vm.setRate(rate)
+                        hud = .rate(rate)
+                    }
+                default:
+                    break
+                }
+            }
+            .onEnded { _ in
+                endBoost()
+            }
+    }
+
     private var seekAndLevelsGesture: some Gesture {
         DragGesture(minimumDistance: 15)
             .onChanged { value in
+                // 倍速进行中：纵向滑动归倍速手势管，不触发 seek/亮度/音量
+                if isBoosting { return }
                 if dragMode == .none {
                     let horizontal = abs(value.translation.width) > abs(value.translation.height)
                     if horizontal {

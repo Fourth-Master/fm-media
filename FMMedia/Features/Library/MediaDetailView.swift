@@ -12,6 +12,7 @@ struct MediaDetailView: View {
 
     @State private var showSubtitleSearch = false
     @State private var showPreviewGallery = false
+    @State private var previewIndex = 0
     @State private var showImportSubtitle = false
 
     private var current: MediaItem {
@@ -68,8 +69,8 @@ struct MediaDetailView: View {
                                 titleHint: current.displayTitle,
                                 media: current)
         }
-        .sheet(isPresented: $showPreviewGallery) {
-            PreviewGallery(images: current.previews)
+        .fullScreenCover(isPresented: $showPreviewGallery) {
+            PreviewGallery(images: current.previews, startIndex: previewIndex)
         }
         .fileImporter(isPresented: $showImportSubtitle,
                       allowedContentTypes: subtitleTypes,
@@ -233,6 +234,7 @@ struct MediaDetailView: View {
                 HStack(spacing: 8) {
                     ForEach(Array(current.previews.prefix(12).indices), id: \.self) { index in
                         Button {
+                            previewIndex = index
                             showPreviewGallery = true
                         } label: {
                             FMImageView(ref: current.previews[index], cornerRadius: 8)
@@ -447,33 +449,45 @@ struct MediaDetailView: View {
     }
 }
 
-// MARK: - 预览图浏览
+// MARK: - 预览图灯箱
 
+/// 灯箱查看：全屏黑底居中、点击任意处关闭、左右滑动翻页、左上角计数角标
 struct PreviewGallery: View {
     let images: [ImageRef]
+    var startIndex: Int = 0
     @Environment(\.dismiss) private var dismiss
     @State private var index = 0
 
     var body: some View {
-        FMNavigationStack {
-            ZStack {
-                Color.black.ignoresSafeArea()
-                TabView(selection: $index) {
-                    ForEach(Array(images.indices), id: \.self) { offset in
-                        FMImageView(ref: images[offset], contentMode: .fit, cornerRadius: 0)
-                            .tag(offset)
-                            .padding(.vertical, 20)
-                    }
-                }
-                .tabViewStyle(.page(indexDisplayMode: .always))
-            }
-            .navigationTitle("\(index + 1) / \(images.count)")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .fmTrailing) {
-                    Button("完成") { dismiss() }
+        ZStack {
+            Color.black.ignoresSafeArea()
+            TabView(selection: $index) {
+                ForEach(Array(images.indices), id: \.self) { offset in
+                    FMImageView(ref: images[offset], contentMode: .fit, cornerRadius: 0)
+                        .tag(offset)
+                        .ignoresSafeArea()
                 }
             }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+
+            VStack {
+                HStack {
+                    Text("\(index + 1) / \(images.count)")
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.85))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(.black.opacity(0.45), in: Capsule())
+                    Spacer()
+                }
+                .padding()
+                Spacer()
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { dismiss() }
+        .onAppear {
+            index = min(max(startIndex, 0), max(images.count - 1, 0))
         }
     }
 }
