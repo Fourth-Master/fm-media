@@ -14,6 +14,7 @@ struct MediaDetailView: View {
     @State private var showPreviewGallery = false
     @State private var previewIndex = 0
     @State private var showImportSubtitle = false
+    @State private var selectedActor: MediaActor?
 
     private var current: MediaItem {
         library.item(id: item.id) ?? item
@@ -71,6 +72,9 @@ struct MediaDetailView: View {
         }
         .fullScreenCover(isPresented: $showPreviewGallery) {
             PreviewGallery(images: current.previews, startIndex: previewIndex)
+        }
+        .sheet(item: $selectedActor) { actor in
+            ActorSheet(name: actor.name, thumb: actor.thumb)
         }
         .fileImporter(isPresented: $showImportSubtitle,
                       allowedContentTypes: subtitleTypes,
@@ -301,15 +305,20 @@ struct MediaDetailView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: 12) {
                     ForEach(current.actors.prefix(20)) { actor in
-                        VStack(spacing: 5) {
-                            FMImageView(ref: actor.thumb, cornerRadius: 26)
-                                .frame(width: 52, height: 52)
-                            Text(actor.name)
-                                .font(.system(size: 10))
-                                .foregroundStyle(FMTheme.textSecondary)
-                                .lineLimit(1)
-                                .frame(width: 62)
+                        Button {
+                            selectedActor = actor
+                        } label: {
+                            VStack(spacing: 5) {
+                                FMImageView(ref: actor.thumb, cornerRadius: 26)
+                                    .frame(width: 52, height: 52)
+                                Text(actor.name)
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(FMTheme.textSecondary)
+                                    .lineLimit(1)
+                                    .frame(width: 62)
+                            }
                         }
+                        .buttonStyle(.plain)
                     }
                 }
                 .padding(.horizontal, 16)

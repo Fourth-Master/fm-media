@@ -39,7 +39,9 @@ final class LibraryStore: ObservableObject {
 
     // MARK: - 扫描
 
-    func scan(sources: [MediaSourceConfig], force: Bool = false) async {
+    /// kinds = nil 时扫描全部可扫来源；指定时只扫对应类型（本机 / 网盘）。
+    /// 全量扫描（force=true）只由设置页手动触发
+    func scan(sources: [MediaSourceConfig], force: Bool = false, kinds: Set<SourceKind>? = nil) async {
         guard !isScanning else { return }
         isScanning = true
         lastError = nil
@@ -49,8 +51,10 @@ final class LibraryStore: ObservableObject {
         defer { BackgroundKeepAlive.shared.end() }
 
         // 可自动扫描的来源：本机目录 + WebDAV / SMB；云盘与媒体服务器另行处理
-        let scannable = sources.filter { $0.isEnabled && ($0.kind == .local || $0.kind == .webdav || $0.kind == .smb) }
-        AppDebugLog.write("[Scan] 开始 force=\(force) sources=\(scannable.count)")
+        let allScannable = sources.filter { $0.isEnabled && ($0.kind == .local || $0.kind == .webdav || $0.kind == .smb) }
+        let scannable = kinds.map { set in allScannable.filter { set.contains($0.kind) } } ?? allScannable
+        let kindsText = kinds.map { $0.map(\.rawValue).sorted().joined(separator: ",") } ?? "全部"
+        AppDebugLog.write("[Scan] 开始 force=\(force) kinds=\(kindsText) sources=\(scannable.count)")
 
         // 保留不可自动扫描来源（如 Emby 导入）的条目
         let keptItems = items.filter { item in

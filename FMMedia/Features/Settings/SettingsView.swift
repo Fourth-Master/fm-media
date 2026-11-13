@@ -123,15 +123,16 @@ struct SettingsView: View {
 
     private var librarySection: some View {
         Section {
+            // 增量扫描：只扫变化与新文件夹；全量扫描只手动触发
             Button {
                 Task {
-                    await library.scan(sources: database.sources, force: true)
+                    await library.scan(sources: database.sources, kinds: [.local])
                     settings.data.lastLibraryScan = library.lastScan
-                    statusMessage = "扫描完成，共 \(library.items.count) 部"
+                    statusMessage = "本机增量扫描完成，共 \(library.items.count) 部"
                 }
             } label: {
                 HStack {
-                    Label("扫描本机目录", systemImage: "arrow.clockwise")
+                    Label("扫描本机目录（增量）", systemImage: "arrow.clockwise")
                     Spacer()
                     if library.isScanning {
                         ProgressView().controlSize(.small)
@@ -141,6 +142,45 @@ struct SettingsView: View {
                             .foregroundStyle(FMTheme.textTertiary)
                     }
                 }
+            }
+            .disabled(library.isScanning)
+
+            Button {
+                Task {
+                    await library.scan(sources: database.sources, kinds: [.webdav, .smb])
+                    settings.data.lastLibraryScan = library.lastScan
+                    statusMessage = "网盘增量扫描完成，共 \(library.items.count) 部"
+                }
+            } label: {
+                HStack {
+                    Label("扫描网盘目录（增量）", systemImage: "icloud.and.arrow.down")
+                    Spacer()
+                    if library.isScanning {
+                        ProgressView().controlSize(.small)
+                    }
+                }
+            }
+            .disabled(library.isScanning)
+
+            Button {
+                Task {
+                    await library.scan(sources: database.sources, force: true, kinds: [.local])
+                    settings.data.lastLibraryScan = library.lastScan
+                    statusMessage = "本机全量扫描完成，共 \(library.items.count) 部"
+                }
+            } label: {
+                Label("本机全量扫描（手动）", systemImage: "arrow.triangle.2.circlepath")
+            }
+            .disabled(library.isScanning)
+
+            Button {
+                Task {
+                    await library.scan(sources: database.sources, force: true, kinds: [.webdav, .smb])
+                    settings.data.lastLibraryScan = library.lastScan
+                    statusMessage = "网盘全量扫描完成，共 \(library.items.count) 部"
+                }
+            } label: {
+                Label("网盘全量扫描（手动）", systemImage: "icloud.and.arrow.down.fill")
             }
             .disabled(library.isScanning)
 
@@ -191,8 +231,31 @@ struct SettingsView: View {
 
             Toggle("标题完整显示", isOn: $settings.data.showFullTitle)
             Toggle("详情页预览截图", isOn: $settings.data.showDetailPreviews)
-            Toggle("版本升级后自动全量扫描", isOn: $settings.data.autoScanOnLaunch)
             Toggle("启用题材分类", isOn: $settings.data.enableGenreCategories)
+
+            // 非自定义模式也暴露大标题字段选择（TITLE / ORIGINALTITLE）
+            if settings.data.titleMode != .custom {
+                HStack {
+                    Text("大标题字段")
+                    Spacer()
+                    Menu {
+                        ForEach([TitleField.title, .originalTitle], id: \.self) { field in
+                            Button {
+                                settings.data.titleField = field
+                            } label: {
+                                if settings.data.titleField == field {
+                                    Label(field.title, systemImage: "checkmark")
+                                } else {
+                                    Text(field.title)
+                                }
+                            }
+                        }
+                    } label: {
+                        Text(titleFieldLabel(settings.data.titleField))
+                            .foregroundStyle(FMTheme.accent)
+                    }
+                }
+            }
 
             if settings.data.titleMode == .custom {
                 HStack {

@@ -11,16 +11,16 @@ enum TitleDisplayMode: String, Codable, CaseIterable, Identifiable, Hashable {
 
     var title: String {
         switch self {
-        case .originalWithPlot: return "原名 + 简介"
-        case .titleWithActors: return "标题 + 演员"
+        case .originalWithPlot: return "大标题 + 简介"
+        case .titleWithActors: return "大标题 + 演员"
         case .custom: return "自定义组合"
         }
     }
 
     var detail: String {
         switch self {
-        case .originalWithPlot: return "大标题用 originaltitle，小标题截取简介开头"
-        case .titleWithActors: return "大标题用 title，小标题列出演员"
+        case .originalWithPlot: return "大标题字段在下方选择（TITLE / ORIGINALTITLE），小标题截取简介开头"
+        case .titleWithActors: return "大标题字段在下方选择（TITLE / ORIGINALTITLE），小标题列出演员"
         case .custom: return "自行勾选字段组合大标题与小标题"
         }
     }
@@ -72,10 +72,11 @@ enum TitleResolver {
             return fallback(item, preferOriginal: true, subtitle: composedSubtitle)
 
         case .originalWithPlot:
-            return fallback(item, preferOriginal: true, subtitle: excerpt(item.plot))
+            // 大标题字段由设置选择（TITLE / ORIGINALTITLE），缺失时自动回退
+            return fallback(item, preferOriginal: titleField == .originalTitle, subtitle: excerpt(item.plot))
 
         case .titleWithActors:
-            return fallback(item, preferOriginal: false, subtitle: actorText(item))
+            return fallback(item, preferOriginal: titleField == .originalTitle, subtitle: actorText(item))
         }
     }
 
