@@ -219,7 +219,7 @@ struct PlayerScreen: View {
     }
 
     /// 长按倍速：按住 0.4s 进入倍速（按住期间生效），上下滑动以 0.1 步进
-    /// 增减倍速（上滑加速/下滑减速，每 36pt 一档），松手恢复原速。
+    /// 增减倍速（上滑加速/下滑减速，每 18pt 一档），松手恢复原速。
     /// 长按成功前移动手指仍走 seekAndLevelsGesture（seek/亮度/音量互不干扰）
     private var boostGesture: some Gesture {
         LongPressGesture(minimumDuration: 0.4, maximumDistance: 25)
@@ -229,7 +229,7 @@ struct PlayerScreen: View {
                 case .second(true, let drag):
                     if !isBoosting { startBoost() }
                     guard let drag else { return }
-                    let steps = Int(((-drag.translation.height) / 36.0).rounded())
+                    let steps = Int(((-drag.translation.height) / 18.0).rounded())
                     let rate = min(max(settings.data.longPressRate + Double(steps) * 0.1, 0.5), 4.0)
                     if abs(rate - vm.playbackRate) > 0.001 {
                         vm.setRate(rate)
@@ -261,7 +261,7 @@ struct PlayerScreen: View {
                         dragMode = .volume
                         dragStartVolume = Double(SystemVolume.current())
                     }
-                    if dragMode != .none { showControlsTemporarily() }
+                    if dragMode != .none { keepControlsIfVisible() }
                 }
 
                 let height = max(viewSize.height, 1)
@@ -317,7 +317,7 @@ struct PlayerScreen: View {
         vm.skip(seconds)
         let text = seconds > 0 ? "快进 10 秒" : "后退 10 秒"
         seekHint = text
-        showControlsTemporarily()
+        keepControlsIfVisible()
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 700_000_000)
             if seekHint == text { seekHint = nil }
@@ -329,8 +329,6 @@ struct PlayerScreen: View {
     private var controls: some View {
         VStack(spacing: 0) {
             topBar
-            Spacer()
-            centerControls
             Spacer()
             bottomBar
         }
@@ -561,25 +559,28 @@ struct PlayerScreen: View {
         }
     }
 
-    private var centerControls: some View {
-        HStack(spacing: 46) {
+    /// 播放控制（后退 10s / 播放暂停 / 快进 10s）：右下角紧凑排列
+    private var bottomControls: some View {
+        HStack(spacing: 20) {
+            Spacer()
             Button {
                 vm.skip(-10)
                 showControlsTemporarily()
             } label: {
                 Image(systemName: "gobackward.10")
-                    .font(.system(size: 30, weight: .regular))
-                    .foregroundStyle(.white)
+                    .font(.system(size: 19, weight: .regular))
+                    .foregroundStyle(.white.opacity(0.92))
             }
+            .frame(width: 34, height: 34)
 
             Button {
                 vm.togglePlay()
                 showControlsTemporarily()
             } label: {
                 Image(systemName: vm.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 32, weight: .bold))
+                    .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(.white)
-                    .frame(width: 68, height: 68)
+                    .frame(width: 38, height: 38)
                     .background(.white.opacity(0.16), in: Circle())
             }
 
@@ -588,9 +589,10 @@ struct PlayerScreen: View {
                 showControlsTemporarily()
             } label: {
                 Image(systemName: "goforward.10")
-                    .font(.system(size: 30, weight: .regular))
-                    .foregroundStyle(.white)
+                    .font(.system(size: 19, weight: .regular))
+                    .foregroundStyle(.white.opacity(0.92))
             }
+            .frame(width: 34, height: 34)
         }
     }
 
@@ -637,6 +639,8 @@ struct PlayerScreen: View {
                 }
             }
             .font(.system(size: 11))
+
+            bottomControls
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 14)
@@ -724,6 +728,12 @@ struct PlayerScreen: View {
             }
         }
         scheduleAutoHide()
+    }
+
+    /// 手势过程中：仅当操作界面已显示时延长可见时间；
+    /// 隐藏状态下不主动弹出（HUD 反馈不受影响）
+    private func keepControlsIfVisible() {
+        if vm.showControls { scheduleAutoHide() }
     }
 
     private func scheduleAutoHide() {
