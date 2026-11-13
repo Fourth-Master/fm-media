@@ -124,11 +124,17 @@ enum TitleResolver {
         return DisplayTitle(title: item.code, subtitle: subtitle, isFallback: true)
     }
 
-    /// 扫描器在无 NFO 时会把 title 填成番号，这种视为“没有数据源”
+    /// 扫描器在无 NFO 时会把 title 填成番号展示形式（"CODE" 或 "CODE · 破解 · 字幕"），
+    /// 仅完全匹配该形式才视为"没有数据源"。
+    /// NFO 的真实标题常以番号开头（如 "MIDA-849 大浴場…"），
+    /// 前缀判断会误杀真实标题，导致大标题选 TITLE 时仍显示 originaltitle
     private static func hasRealTitle(_ item: MediaItem) -> Bool {
         let title = item.title.trimmed
         guard !title.isEmpty else { return false }
-        return !title.hasPrefix(item.code)
+        let code = item.code.trimmed
+        if title.caseInsensitiveCompare(code) == .orderedSame { return false }
+        if title.lowercased().hasPrefix(code.lowercased() + " · ") { return false }
+        return true
     }
 
     private static func actorText(_ item: MediaItem) -> String {
