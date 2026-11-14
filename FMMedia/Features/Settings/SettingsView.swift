@@ -56,7 +56,10 @@ struct SettingsView: View {
             .fmPageBackground()
             .navigationTitle("设置")
             .sheet(isPresented: $showSubtitleStyle) {
-                SubtitleSettingsSheet(delayMs: 0, onDelayChange: { _ in })
+                SubtitlePanelOverlay(delayMs: 0,
+                                     durationSeconds: 0,
+                                     onDelayChange: { _ in },
+                                     onClose: { showSubtitleStyle = false })
             }
             .sheet(isPresented: $showAddSource) {
                 AddSourceView(editing: editingSource)
