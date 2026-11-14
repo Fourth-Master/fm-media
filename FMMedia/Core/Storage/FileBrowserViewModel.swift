@@ -229,6 +229,15 @@ final class FileBrowserViewModel: ObservableObject {
         return try await provider.stream(path: entry.path)
     }
 
+    /// 图片/NFO 预览数据源：本机返回文件 URL；远程返回带鉴权头的直链
+    func previewRef(for entry: FileEntry) async -> ImageRef? {
+        if source.kind == .local {
+            return ImageRef(url: URL(fileURLWithPath: entry.path))
+        }
+        guard let descriptor = try? await stream(for: entry) else { return nil }
+        return ImageRef(url: descriptor.url, headers: descriptor.headers)
+    }
+
     func playbackRequest(for entry: FileEntry) async throws -> PlaybackRequest {
         let descriptor = try await stream(for: entry)
         return PlaybackRequest(stream: descriptor,

@@ -369,13 +369,17 @@ struct ContentRowCard: View {
     /// 行高上限与小图卡片封面高度一致
     private let rowHeight: CGFloat = 108
 
+    /// 内容模式封面：优先大封面（fanart 横图），没有才用海报小封面
+    private var cover: ImageRef? { item.fanart ?? item.poster }
+    private var isWideCover: Bool { item.fanart != nil }
+
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Color.clear
-                .aspectRatio(0.7, contentMode: .fit)
+                .aspectRatio(isWideCover ? 1.77 : 0.7, contentMode: .fit)
                 .frame(height: rowHeight)
                 .overlay {
-                    FMImageView(ref: item.poster, cornerRadius: 8)
+                    FMImageView(ref: cover, cornerRadius: 8)
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay(alignment: .bottom) {

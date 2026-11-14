@@ -15,6 +15,7 @@ struct FileBrowserView: View {
     @State private var inputRequest: InputSheetRequest?
     @State private var inputText = ""
     @State private var previewImage: ImageRef?
+    @State private var textViewer: TextViewerTarget?
     @State private var banner: String?
     @State private var isPreparingPlayback = false
 
@@ -94,6 +95,9 @@ struct FileBrowserView: View {
         }
         .sheet(item: $previewImage) { ref in
             ImagePreviewSheet(ref: ref)
+        }
+        .sheet(item: $textViewer) { target in
+            TextViewerSheet(target: target)
         }
         .overlay(alignment: .bottom) {
             if let banner {
@@ -294,11 +298,17 @@ struct FileBrowserView: View {
             } label: {
                 Label("播放", systemImage: "play.fill")
             }
-        } else if entry.kind == .image && source.kind == .local {
+        } else if entry.kind == .image {
             Button {
-                previewImage = ImageRef(url: URL(fileURLWithPath: entry.path))
+                openImagePreview(entry)
             } label: {
                 Label("查看图片", systemImage: "photo")
+            }
+        } else if entry.kind == .nfo {
+            Button {
+                openTextViewer(entry)
+            } label: {
+                Label("查看 NFO 内容", systemImage: "doc.text")
             }
         }
 
@@ -435,11 +445,35 @@ struct FileBrowserView: View {
             Task { await vm.open(entry) }
         } else if entry.kind.isPlayable {
             play(entry)
-        } else if entry.kind == .image && source.kind == .local {
-            previewImage = ImageRef(url: URL(fileURLWithPath: entry.path))
+        } else if entry.kind == .image {
+            openImagePreview(entry)
+        } else if entry.kind == .nfo {
+            openTextViewer(entry)
         } else {
             banner = entry.displayName
             dismissBanner()
+        }
+    }
+
+    /// 图片预览：本机直接读文件；远程取带鉴权头的直链
+    private func openImagePreview(_ entry: FileEntry) {
+        Task {
+            if let ref = await vm.previewRef(for: entry) {
+                previewImage = ref
+            } else {
+                vm.errorMessage = "无法获取图片预览地址"
+            }
+        }
+    }
+
+    /// NFO 用文本查看器打开
+    private func openTextViewer(_ entry: FileEntry) {
+        Task {
+            if let ref = await vm.previewRef(for: entry) {
+                textViewer = TextViewerTarget(name: entry.displayName, ref: ref)
+            } else {
+                vm.errorMessage = "无法获取文件地址"
+            }
         }
     }
 
@@ -518,6 +552,96 @@ struct ImagePreviewSheet: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - 文本查看器（NFO 等）
+
+struct TextViewerTarget: Identifiable {
+    let id = UUID()
+    let name: String
+    let ref: ImageRef
+}
+
+struct TextViewerSheet: View {
+    let target: TextViewerTarget
+    @Environment(\.dismiss) private var dismiss
+    @State private var content: String?
+    @State private var failed = false
+
+    var body: some View {
+        FMNavigationStack {
+            Group {
+                if let content {
+                    ScrollView(.vertical, showsIndicators: true) {
+                        Text(content)
+                            .font(.system(size: 12, design: .monospaced))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(14)
+                            .textSelection(.enabled)
+                    }
+                } else if failed {
+                    VStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 30))
+                            .foregroundStyle(.secondary)
+                        Text("无法读取文件")
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .background(FMTheme.surface.ignoresSafeArea())
+            .navigationTitle(target.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .fmTrailing) {
+                    Button("完成") { dismiss() }
+                }
+            }
+            .task { await load() }
+        }
+    }
+
+    /// 本机读文件；远程带鉴权头直取。UTF-8 优先，回退 GB18030（部分 NFO 为 GBK 编码）
+    private func load() async {
+        do {
+            let data: Data
+            if target.ref.url.isFileURL {
+                data = try Data(contentsOf: target.ref.url)
+            } else {
+                var request = URLRequest(url: target.ref.url)
+                request.timeoutInterval = 30
+                for (key, value) in target.ref.headers {
+                    request.setValue(value, forHTTPHeaderField: key)
+                }
+                let (payload, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                    throw URLError(.badServerResponse)
+                }
+                data = payload
+            }
+            // 超过 256KB 只显示前段（NFO 极少超过）
+            let text = Self.decode(Data(data.prefix(256 * 1024)))
+            if text.isEmpty {
+                failed = true
+            } else {
+                content = text
+            }
+        } catch {
+            failed = true
+        }
+    }
+
+    private static func decode(_ data: Data) -> String {
+        if let text = String(data: data, encoding: .utf8), !text.isEmpty { return text }
+        let gb = String.Encoding(
+            rawValue: CFStringConvertEncodingToNSStringEncoding(
+                CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)))
+        return String(data: data, encoding: gb) ?? ""
     }
 }
 
