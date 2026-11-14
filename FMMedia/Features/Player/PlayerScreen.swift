@@ -85,6 +85,18 @@ struct PlayerScreen: View {
                     .transition(.opacity)
             }
 
+            if showSubtitlePanel {
+                SubtitlePanelOverlay(delayMs: vm.subtitleDelay,
+                                     durationSeconds: vm.duration,
+                                     onDelayChange: { vm.setSubtitleDelay($0) },
+                                     onClose: {
+                                         withAnimation(.easeInOut(duration: 0.18)) {
+                                             showSubtitlePanel = false
+                                         }
+                                     })
+                    .transition(.opacity)
+            }
+
             if let hud {
                 VStack {
                     hudView(hud)
@@ -136,10 +148,6 @@ struct PlayerScreen: View {
             vm.cleanup()
             // 横屏播放退出后恢复竖屏，避免下层页面残留横屏
             OrientationManager.set(.portrait)
-        }
-        .sheet(isPresented: $showSubtitlePanel) {
-            SubtitleSettingsSheet(delayMs: vm.subtitleDelay,
-                                  onDelayChange: { vm.setSubtitleDelay($0) })
         }
         .sheet(isPresented: $showSubtitleSearch) {
             SubtitleSearchSheet(code: searchCode,
@@ -559,40 +567,20 @@ struct PlayerScreen: View {
         }
     }
 
-    /// 播放控制（后退 10s / 播放暂停 / 快进 10s）：右下角紧凑排列
+    /// 播放控制：播放/暂停位于操作条左下角（快进后退已移除，双击画面即可 ±10s）
     private var bottomControls: some View {
-        HStack(spacing: 20) {
-            Spacer()
-            Button {
-                vm.skip(-10)
-                showControlsTemporarily()
-            } label: {
-                Image(systemName: "gobackward.10")
-                    .font(.system(size: 19, weight: .regular))
-                    .foregroundStyle(.white.opacity(0.92))
-            }
-            .frame(width: 34, height: 34)
-
+        HStack {
             Button {
                 vm.togglePlay()
                 showControlsTemporarily()
             } label: {
                 Image(systemName: vm.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 16, weight: .bold))
+                    .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(.white)
-                    .frame(width: 38, height: 38)
+                    .frame(width: 36, height: 36)
                     .background(.white.opacity(0.16), in: Circle())
             }
-
-            Button {
-                vm.skip(10)
-                showControlsTemporarily()
-            } label: {
-                Image(systemName: "goforward.10")
-                    .font(.system(size: 19, weight: .regular))
-                    .foregroundStyle(.white.opacity(0.92))
-            }
-            .frame(width: 34, height: 34)
+            Spacer()
         }
     }
 
