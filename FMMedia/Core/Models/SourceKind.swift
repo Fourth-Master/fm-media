@@ -138,6 +138,7 @@ enum LibraryFilter: String, Codable, CaseIterable, Identifiable {
     case all
     case cracked
     case subtitled
+    case ltx
     case favorites
     case recent
 
@@ -148,6 +149,7 @@ enum LibraryFilter: String, Codable, CaseIterable, Identifiable {
         case .all: return "全部"
         case .cracked: return "破解"
         case .subtitled: return "字幕"
+        case .ltx: return "LTX"
         case .favorites: return "收藏"
         case .recent: return "最近"
         }

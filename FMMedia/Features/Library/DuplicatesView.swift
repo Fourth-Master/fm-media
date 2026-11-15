@@ -8,6 +8,8 @@ struct DuplicatesView: View {
 
     @State private var report: DuplicateFinder.Report?
     @State private var selected: Set<String> = []
+    /// 手动指定的保留条目（组码 → 条目 id）；未指定时用分析建议（LTX 优先）
+    @State private var keepChoices: [String: String] = [:]
     @State private var isPurging = false
     @State private var resultText: String?
     @State private var deleteRemoteFiles = false
@@ -31,11 +33,15 @@ struct DuplicatesView: View {
                                     .font(.system(size: 12))
                                     .foregroundStyle(FMTheme.textTertiary)
                                 Spacer()
-                                Button(selected.count == report.totalDuplicates ? "取消全选" : "全选待清理") {
+                                Button(selected.count == report.totalDuplicates ? "取消全选" : "全选建议清理") {
                                     if selected.count == report.totalDuplicates {
                                         selected.removeAll()
                                     } else {
-                                        selected = Set(report.groups.flatMap { $0.duplicates.map { $0.id } })
+                                        selected = Set(report.groups.flatMap { group in
+                                            candidates(of: group)
+                                                .filter { $0.id != effectiveKeepID(group) }
+                                                .map { $0.id }
+                                        })
                                     }
                                 }
                                 .font(.system(size: 12, weight: .semibold))
@@ -53,14 +59,17 @@ struct DuplicatesView: View {
                         } footer: {
                             Text(deleteRemoteFiles
                                  ? "Emby/Jellyfin 通过接口删除条目（需账号有删除权限）；WebDAV/SMB 直接删除文件与同目录封面/NFO。删除失败时会保留条目。"
-                                 : "仅从媒体库移除；勾选上方开关可同时删除服务器上的影片与封面/NFO。本机影片始终连文件一起删除。")
+                                 : "绿色「保留」为建议（优先 LTX 版本），默认未勾选任何待清理条目。点条目勾选删除；点「保留」按钮可自行更换要保留的版本。勾选上方开关可同时删除服务器上的影片与封面/NFO，本机影片始终连文件一起删除。")
                         }.fmGlassListRow()
 
                         ForEach(report.groups) { group in
                             Section {
-                                keepRow(group.keep)
-                                ForEach(group.duplicates) { candidate in
-                                    duplicateRow(candidate)
+                                ForEach(candidates(of: group)) { candidate in
+                                    if candidate.id == effectiveKeepID(group) {
+                                        keepRow(group, candidate)
+                                    } else {
+                                        duplicateRow(group, candidate)
+                                    }
                                 }
                             } header: {
                                 Text(group.code)
@@ -106,14 +115,37 @@ struct DuplicatesView: View {
         }
     }
 
+    // MARK: - 保留项选择
+
+    /// 组内全部条目（建议保留项排第一）
+    private func candidates(of group: DuplicateFinder.Group) -> [DuplicateFinder.Candidate] {
+        [group.keep] + group.duplicates
+    }
+
+    /// 生效的保留条目：手动指定优先，未指定或已失效时用分析建议（LTX 优先）
+    private func effectiveKeepID(_ group: DuplicateFinder.Group) -> String {
+        if let override = keepChoices[group.code],
+           candidates(of: group).contains(where: { $0.id == override }) {
+            return override
+        }
+        return group.keep.id
+    }
+
+    private func setKeep(_ group: DuplicateFinder.Group, _ id: String) {
+        keepChoices[group.code] = id
+        selected.remove(id)   // 保留项不能同时是待清理项
+    }
+
     // MARK: - 行
 
-    private func keepRow(_ candidate: DuplicateFinder.Candidate) -> some View {
-        HStack(spacing: 10) {
+    private func keepRow(_ group: DuplicateFinder.Group, _ candidate: DuplicateFinder.Candidate) -> some View {
+        let isSuggestion = candidate.id == group.keep.id
+        return HStack(spacing: 10) {
             FMImageView(ref: candidate.item.poster, cornerRadius: 6)
                 .frame(width: 34, height: 48)
             VStack(alignment: .leading, spacing: 3) {
-                Text("保留：" + candidate.item.rawName)
+                Text(isSuggestion ? "建议保留：" + candidate.item.rawName
+                                  : "保留（已手动选择）：" + candidate.item.rawName)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(FMTheme.success)
                 Text(reasonText(candidate))
@@ -128,7 +160,7 @@ struct DuplicatesView: View {
         .padding(.vertical, 2)
     }
 
-    private func duplicateRow(_ candidate: DuplicateFinder.Candidate) -> some View {
+    private func duplicateRow(_ group: DuplicateFinder.Group, _ candidate: DuplicateFinder.Candidate) -> some View {
         Button {
             selected.toggleMembership(candidate.id)
         } label: {
@@ -155,6 +187,22 @@ struct DuplicatesView: View {
                         .font(.system(size: 10))
                         .foregroundStyle(FMTheme.textTertiary)
                 }
+
+                // 自行更换保留条目
+                Button {
+                    setKeep(group, candidate.id)
+                } label: {
+                    VStack(spacing: 1) {
+                        Image(systemName: "checkmark.seal")
+                            .font(.system(size: 15))
+                        Text("保留")
+                            .font(.system(size: 8, weight: .semibold))
+                    }
+                    .foregroundStyle(FMTheme.accent)
+                    .frame(width: 40, height: 34)
+                }
+                .buttonStyle(.plain)
+                .disabled(isPurging)
             }
             .padding(.vertical, 2)
         }

@@ -268,6 +268,11 @@ final class LibraryStore: ObservableObject {
             result = result.filter { $0.isCracked }
         case .subtitled:
             result = result.filter { $0.hasSubtitleFiles }
+        case .ltx:
+            result = result.filter {
+                $0.rawName.uppercased().contains("LTX")
+                    || $0.title.uppercased().contains("LTX")
+            }
         case .favorites:
             result = result.filter { favorites.contains($0.id) }
         }

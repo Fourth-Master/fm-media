@@ -40,6 +40,8 @@ struct PlayerScreen: View {
     @State private var hud: PlayerHUD?
     @State private var isBoosting = false
     @State private var boostBaseRate: Double = 1.0
+    /// 倍速每变化 0.1 档的震动反馈
+    @State private var boostHaptic = UIImpactFeedbackGenerator(style: .light)
     @State private var showSubtitleSavePrompt = false
 
     init(request: PlaybackRequest) {
@@ -227,7 +229,7 @@ struct PlayerScreen: View {
     }
 
     /// 长按倍速：按住 0.4s 进入倍速（按住期间生效），上下滑动以 0.1 步进
-    /// 增减倍速（上滑加速/下滑减速，每 18pt 一档），松手恢复原速。
+    /// 增减倍速（上滑加速/下滑减速，每 12pt 一档，每档震动反馈），松手恢复原速。
     /// 长按成功前移动手指仍走 seekAndLevelsGesture（seek/亮度/音量互不干扰）
     private var boostGesture: some Gesture {
         LongPressGesture(minimumDuration: 0.4, maximumDistance: 25)
@@ -237,11 +239,12 @@ struct PlayerScreen: View {
                 case .second(true, let drag):
                     if !isBoosting { startBoost() }
                     guard let drag else { return }
-                    let steps = Int(((-drag.translation.height) / 18.0).rounded())
+                    let steps = Int(((-drag.translation.height) / 12.0).rounded())
                     let rate = min(max(settings.data.longPressRate + Double(steps) * 0.1, 0.5), 4.0)
                     if abs(rate - vm.playbackRate) > 0.001 {
                         vm.setRate(rate)
                         hud = .rate(rate)
+                        boostHaptic.impactOccurred()
                     }
                 default:
                     break

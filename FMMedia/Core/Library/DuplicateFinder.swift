@@ -53,6 +53,8 @@ enum DuplicateFinder {
     /// 质量打分：越高越值得保留
     private static func qualityScore(_ item: MediaItem) -> Int {
         var score = 0
+        // LTX 版本优先保留（建议项；用户仍可在重复检测页手动更换保留条目）
+        if item.rawName.uppercased().contains("LTX") { score += 80 }
         if item.isCracked { score += 40 }           // 破解优先
         if item.hasSubtitleFiles { score += 40 }    // 字幕优先
         if item.poster != nil { score += 20 }       // 小封面
